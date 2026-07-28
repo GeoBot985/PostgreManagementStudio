@@ -7,3 +7,4 @@
 | 003 | Complete with documented low-severity issues | Provider-independent result selection, typed formatting, streaming PlainText/TSV/CSV/HTML serialization, WPF preview, integration tests, and performance measurement |
 | 004 | In progress | Query document/tab boundaries, selection execution, keyboard shortcuts, cancellation, dirty-state protection, and temporary editor integration |
 | 005 | Complete with documented low-severity issues | SQL document/file services, safe saves, encoding detection, recent files, find/replace, recovery snapshots, and temporary editor commands |
+| 006 | Complete with documented low-severity issues | Lightweight SQL lexer/completion engine, PostgreSQL metadata provider, isolated metadata cache, quoted-name handling, and Ctrl+Space editor completion |
