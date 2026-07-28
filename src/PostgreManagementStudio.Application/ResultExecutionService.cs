@@ -12,10 +12,12 @@ namespace PostgreManagementStudio.Application;
 public sealed class ResultExecutionService
 {
     private readonly IResultSessionBuilder _builder;
+    private readonly IQueryExecutor _executor;
 
     public ResultExecutionService(IQueryExecutor executor, ResultStorageOptions? options = null, ILogger<ResultSessionBuilder>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(executor);
+        _executor = executor;
         _builder = new ResultSessionBuilder(executor, options, logger);
     }
 
@@ -25,4 +27,7 @@ public sealed class ResultExecutionService
     /// </summary>
     public Task<IResultSession> ExecuteAndBuildAsync(QueryRequest request, CancellationToken cancellationToken)
         => _builder.ExecuteAndBuildAsync(request, cancellationToken);
+
+    public ValueTask CloseExecutionScopeAsync(Guid executionScopeId)
+        => _executor is IQueryExecutionScopeManager scopes ? scopes.CloseScopeAsync(executionScopeId) : ValueTask.CompletedTask;
 }

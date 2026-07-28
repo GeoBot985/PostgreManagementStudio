@@ -1,7 +1,6 @@
 using System.Collections;
 using System.Globalization;
 using System.Numerics;
-using System.Text;
 using System.Text.Json;
 using PostgreManagementStudio.Core;
 
@@ -11,9 +10,25 @@ public sealed class DefaultResultValueFormatter : IResultValueFormatter
 {
     public string FormatForDisplay(ResultCell cell, ResultColumn column, ResultDisplayFormattingOptions options)
     {
-        var text = cell.IsNull ? options.NullText : FormatForSerialization(cell, column, new ResultSerializationFormattingOptions());
-        if (options.UseSingleLinePreview) text = text.Replace("\r", options.ShowControlCharacterMarkers ? "↵" : " ").Replace("\n", options.ShowControlCharacterMarkers ? "↵" : " ").Replace("\t", options.ShowControlCharacterMarkers ? "→" : " ");
-        return text.Length <= options.MaximumTextLength ? text : text[..Math.Max(0, options.MaximumTextLength - 1)] + "…";
+        try
+        {
+            var text = cell.IsNull
+                ? options.NullText
+                : cell.Value is byte[] bytes
+                    ? BinaryPreview(bytes, options.MaximumTextLength)
+                    : cell.Value as string ?? FormatForSerialization(cell, column, new ResultSerializationFormattingOptions());
+            if (options.UseSingleLinePreview)
+                text = text.Replace("\r", options.ShowControlCharacterMarkers ? "↵" : " ")
+                    .Replace("\n", options.ShowControlCharacterMarkers ? "↵" : " ")
+                    .Replace("\t", options.ShowControlCharacterMarkers ? "→" : " ");
+            return text.Length <= options.MaximumTextLength
+                ? text
+                : text[..Math.Max(0, options.MaximumTextLength - 1)] + "…";
+        }
+        catch (Exception ex)
+        {
+            return $"<formatting error: {ex.GetType().Name}>";
+        }
     }
 
     public string FormatForSerialization(ResultCell cell, ResultColumn column, ResultSerializationFormattingOptions options)
@@ -38,11 +53,20 @@ public sealed class DefaultResultValueFormatter : IResultValueFormatter
         if (value is JsonDocument json) return json.RootElement.GetRawText();
         if (value is IEnumerable enumerable and not string)
         {
-            var items = new List<string>(); foreach (var item in enumerable) items.Add(item is null ? options.NullText : FormatValue(item, options));
+            var items = new List<string>();
+            foreach (var item in enumerable) items.Add(item is null ? options.NullText : FormatValue(item, options));
             return "{" + string.Join(",", items.Select(EscapeArrayItem)) + "}";
         }
         return value is IFormattable formattable ? formattable.ToString(null, CultureInfo.InvariantCulture) ?? string.Empty : value.ToString() ?? string.Empty;
     }
 
     private static string EscapeArrayItem(string item) => item.Contains(',') || item.Contains('"') || item.Contains('{') ? '"' + item.Replace("\"", "\\\"") + '"' : item;
+
+    private static string BinaryPreview(byte[] bytes, int maximumTextLength)
+    {
+        var suffix = $"… ({bytes.Length:N0} bytes)";
+        var previewBytes = Math.Min(bytes.Length, Math.Max(1, (maximumTextLength - 2 - suffix.Length) / 2));
+        var preview = "0x" + Convert.ToHexString(bytes.AsSpan(0, previewBytes));
+        return previewBytes == bytes.Length ? preview : preview + suffix;
+    }
 }

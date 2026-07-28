@@ -48,3 +48,16 @@ New evidence-based blockers:
 | TD-035-003 | Yes | High | Connection lifecycle | no automated server-loss/disconnect/reconnect workspace state machine | 36 |
 | TD-035-004 | Yes | High | Restore | no disposable real restore end-to-end regression | 36/38 |
 | TD-035-005 | Yes | High | Query performance | no production pg_stat_statements collector/workspace | 35 follow-up/36 |
+
+## Sprint 36 updates
+
+- `TD-034-007` is resolved: query documents own cancellation, result sessions,
+  tab-scoped provider sessions, and deterministic shutdown disposal.
+- `TD-034-016` is reduced: query execution emits structured privacy-bounded
+  correlation telemetry; host-wide logging configuration remains later work.
+- `TD-035-001` is resolved: opt-in user-managed editor scopes preserve
+  PostgreSQL transaction state, expose `25P02`, require explicit rollback, lock
+  connection context, and dispose/reset on close.
+- `TD-035-003` is resolved for the SQL editor: backend termination, missing
+  databases, timeout, invalid profiles, pool discard, controlled recovery, and
+  no automatic replay are automated.

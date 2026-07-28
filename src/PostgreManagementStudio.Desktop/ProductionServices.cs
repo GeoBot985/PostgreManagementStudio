@@ -9,17 +9,25 @@ namespace PostgreManagementStudio.Desktop;
 
 public static class ProductionServices
 {
-    public static ServiceProvider Build(string settingsPath)
+    public static ServiceProvider Build(string settingsPath, ApplicationSettings? applicationSettings = null)
     {
+        var settings = (applicationSettings ?? new ApplicationSettings()).Validate();
         var services = new ServiceCollection();
         services.AddSingleton<INpgsqlConnectionFactory>(NpgsqlConnectionFactory.Shared);
         services.AddSingleton<IQueryExecutor>(sp => new NpgsqlQueryExecutor(sp.GetRequiredService<INpgsqlConnectionFactory>()));
         services.AddSingleton<IPostgresVersionQuery>(sp => new NpgsqlPostgresVersionQuery(sp.GetRequiredService<INpgsqlConnectionFactory>()));
         services.AddSingleton<IPostgresMetadataProvider>(sp => new NpgsqlMetadataProvider(sp.GetRequiredService<INpgsqlConnectionFactory>()));
         services.AddSingleton<IApplicationSettingsStore>(new JsonApplicationSettingsStore(settingsPath));
+        services.AddSingleton(settings);
+        services.AddSingleton<IQueryExecutionTelemetry, DiagnosticQueryExecutionTelemetry>();
         services.AddSingleton<IUserConfirmationService, WpfUserConfirmationService>();
         services.AddSingleton<DestructiveOperationGuard>();
-        services.AddSingleton<ResultExecutionService>();
+        services.AddSingleton(sp => new ResultExecutionService(
+            sp.GetRequiredService<IQueryExecutor>(),
+            new ResultStorageOptions(
+                maximumSessionMemoryBytes: 128L * 1024 * 1024,
+                maximumResultSetMemoryBytes: 64L * 1024 * 1024,
+                maximumRowsPerResultSet: settings.DisplayedRowLimit)));
         services.AddSingleton<QueryTabManager>();
         services.AddTransient<PostgresVersionService>();
         services.AddTransient<ObjectExplorerService>();

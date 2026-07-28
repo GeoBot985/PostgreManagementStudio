@@ -76,6 +76,7 @@ public interface IResultSession : IAsyncDisposable
     long EstimatedMemoryBytes { get; }
     long ReceivedRowCount { get; }
     long RetainedRowCount { get; }
+    long RowsAffected { get; }
     bool WasTruncated { get; }
     ResultTruncationReason? TruncationReason { get; }
 }

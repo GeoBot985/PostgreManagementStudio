@@ -24,6 +24,7 @@ internal sealed class ResultSession : IResultSession
     // Session-level state.
     private int _status; // ResultSessionStatus as int
     private long _receivedRowCount; // aggregate
+    private long _rowsAffected;
     private long _memoryBytes;
     private int _truncatedFlag;
     private ResultTruncationReason _truncationReason;
@@ -81,6 +82,7 @@ internal sealed class ResultSession : IResultSession
     public long EstimatedMemoryBytes => Interlocked.Read(ref _memoryBytes);
 
     public long ReceivedRowCount => Interlocked.Read(ref _receivedRowCount);
+    public long RowsAffected => Interlocked.Read(ref _rowsAffected);
 
     public long RetainedRowCount
     {
@@ -236,6 +238,11 @@ internal sealed class ResultSession : IResultSession
 
     internal void AddReceivedRows(long received)
         => Interlocked.Add(ref _receivedRowCount, received);
+
+    internal void AddRowsAffected(long rowsAffected)
+    {
+        if (rowsAffected > 0) Interlocked.Add(ref _rowsAffected, rowsAffected);
+    }
 
     internal void OnResultSetCompleted(ResultSetStore store) { _ = store; }
 

@@ -78,8 +78,8 @@ public sealed class ResultSessionBuilder : IResultSessionBuilder
                         session.AddNotice(notice.Notice);
                         break;
 
-                    case CommandCompleted:
-                        // Commands do not produce result sets; nothing to retain.
+                    case CommandCompleted command:
+                        if (command.RowsAffected is { } affected) session.AddRowsAffected(affected);
                         break;
 
                     case ExecutionFailed failed:

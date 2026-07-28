@@ -37,3 +37,4 @@
 | Sprint 033 | Index Analysis and Recommendation Workspace | Complete with documented UI and collector limitations |
 | Sprint 034 | Full Codebase Audit and Architecture Consolidation | Complete with explicit release blockers and hardening backlog |
 | Sprint 035 | End-to-End Integration and Regression Baseline | Complete baseline with explicit P0/P1 release blockers |
+| Sprint 036 | SQL Editor Reliability and Execution Hardening | Complete with lifecycle, context, cancellation, transaction, and failure regression coverage |

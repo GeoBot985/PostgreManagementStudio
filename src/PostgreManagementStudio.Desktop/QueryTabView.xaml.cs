@@ -12,17 +12,60 @@ namespace PostgreManagementStudio.Desktop;
 
 public partial class QueryTabView : UserControl
 {
-    private readonly QueryDocument _document; private readonly DestructiveOperationGuard _destructiveOperations; private IResultSession? _session; private bool _initializing = true; public event EventHandler? DirtyChanged;
+    private readonly QueryDocument _document; private readonly DestructiveOperationGuard _destructiveOperations; private readonly ApplicationSettings _settings; private IResultSession? _session; private bool _initializing = true; public event EventHandler? DirtyChanged;
     private readonly DocumentFileService _fileService = new(); private SqlDocument _file = new() { DisplayName = "Query" };
-    public QueryTabView(QueryDocument document, DestructiveOperationGuard destructiveOperations) { InitializeComponent(); _document = document; _destructiveOperations = destructiveOperations; SqlText.Text = document.SqlText; DatabaseText.Text = document.Database; _initializing = false; }
+    public QueryTabView(QueryDocument document, DestructiveOperationGuard destructiveOperations, ApplicationSettings settings) { InitializeComponent(); _document = document; _destructiveOperations = destructiveOperations; _settings = settings; _document.ExecutionStateChanged += Document_ExecutionStateChanged; Unloaded += (_, _) => _document.ExecutionStateChanged -= Document_ExecutionStateChanged; SqlText.Text = document.SqlText; DatabaseText.Text = document.Database; _initializing = false; UpdateCommandState(); }
     private async void Execute_Click(object sender, RoutedEventArgs e) { await ExecuteAsync(); }
     private async Task ExecuteAsync()
     {
-        _document.SqlText = SqlText.Text; _document.Database = DatabaseText.Text; var selected = SqlText.SelectionLength > 0 ? SqlText.SelectedText : null; ExecuteButton.IsEnabled = false; StatusText.Text = "Running…"; MessagesText.Clear();
-        try { var session = await _document.ExecuteAsync(selected); _session = session; var output = new StringBuilder(_document.Message); ResultTabs.Items.Clear(); if (session is not null) { output.AppendLine(); foreach (var notice in session.Notices) output.AppendLine($"NOTICE [{notice.Severity}]: {notice.Message}"); for (var resultIndex = 0; resultIndex < session.ResultSets.Count; resultIndex++) { var store = session.ResultSets[resultIndex]; var rows = await store.GetRowsAsync(0, (int)Math.Min(store.LoadedRowCount, 10_000), CancellationToken.None); ResultTabs.Items.Add(CreateResultTab(store, rows)); if (store.LoadedRowCount > 10_000) output.AppendLine("Result display limited to 10,000 rows."); } if (session.ResultSets.Count > 0) ResultSummary.Text = string.Join(" | ", session.ResultSets.Select((s, i) => $"Results {i + 1}: {s.LoadedRowCount:N0} rows · {s.Schema.Columns.Count} columns")); } MessagesText.Text = output.ToString(); StatusText.Text = _document.State.ToString(); }
-        catch (Exception ex) { StatusText.Text = "Error"; MessagesText.Text = ex.Message; } finally { ExecuteButton.IsEnabled = true; DirtyChanged?.Invoke(this, EventArgs.Empty); }
+        if (!_document.CanExecute) return;
+        _document.SqlText = SqlText.Text; _document.Database = DatabaseText.Text; var selected = SqlText.SelectionLength > 0 ? SqlText.SelectedText : null; StatusText.Text = "Preparing"; MessagesText.Clear(); UpdateCommandState();
+        try
+        {
+            var session = await _document.ExecuteAsync(selected); _session = session; var output = new StringBuilder(_document.Message); ResultTabs.Items.Clear();
+            if (session is not null)
+            {
+                output.AppendLine();
+                foreach (var notice in session.Notices) output.AppendLine($"NOTICE [{notice.Severity}]: {notice.Message}");
+                for (var resultIndex = 0; resultIndex < session.ResultSets.Count; resultIndex++)
+                {
+                    var store = session.ResultSets[resultIndex];
+                    var rows = await store.GetRowsAsync(0, checked((int)store.LoadedRowCount), CancellationToken.None);
+                    ResultTabs.Items.Add(CreateResultTab(store, rows));
+                }
+                if (session.WasTruncated) output.AppendLine($"Results truncated: displaying {session.RetainedRowCount:N0} of {session.ReceivedRowCount:N0} rows ({session.TruncationReason}).");
+                else if (session.ReceivedRowCount >= _settings.ResultWarningThreshold) output.AppendLine($"Large result warning: {session.ReceivedRowCount:N0} rows were loaded.");
+                if (session.ResultSets.Count > 0) ResultSummary.Text = string.Join(" | ", session.ResultSets.Select((s, i) => $"Results {i + 1}: {s.LoadedRowCount:N0} displayed / {s.FinalRowCount:N0} received · {s.Schema.Columns.Count} columns"));
+                HighlightErrorPosition(session.Error, selected);
+            }
+            MessagesText.Text = output.ToString();
+            StatusText.Text = _document.LastExecutionContext is { } context ? $"{_document.State} · {context.ServerIdentity} / {context.Database}" : _document.State.ToString();
+        }
+        catch (Exception ex) { StatusText.Text = "Error"; MessagesText.Text = SecretRedactor.Redact(ex.Message); }
+        finally { UpdateCommandState(); DirtyChanged?.Invoke(this, EventArgs.Empty); }
     }
-    private void Cancel_Click(object sender, RoutedEventArgs e) => _document.Cancel();
+    private async void Cancel_Click(object sender, RoutedEventArgs e) => await _document.CancelAsync();
+    private void Document_ExecutionStateChanged(object? sender, EventArgs e)
+    {
+        if (!Dispatcher.CheckAccess()) { _ = Dispatcher.BeginInvoke(UpdateCommandState); return; }
+        UpdateCommandState();
+    }
+    private void UpdateCommandState()
+    {
+        ExecuteButton.IsEnabled = _document.CanExecute;
+        CancelButton.IsEnabled = _document.CanCancel;
+        DatabaseText.IsEnabled = !_document.IsExecuting;
+        if (_document.IsExecuting) StatusText.Text = _document.Message;
+    }
+    private void HighlightErrorPosition(DatabaseError? error, string? selectedSql)
+    {
+        if (error?.Position is not > 0) return;
+        var offset = error.Position.Value - 1;
+        var sourceLength = selectedSql?.Length ?? SqlText.Text.Length;
+        if (offset >= sourceLength || selectedSql is not null) return;
+        SqlText.Select(offset, Math.Min(1, SqlText.Text.Length - offset));
+        SqlText.Focus();
+    }
     private TabItem CreateResultTab(IResultSetStore store, IReadOnlyList<ResultRow> rows)
     {
         var view = new DataGrid { AutoGenerateColumns = false, IsReadOnly = true, CanUserResizeColumns = true, SelectionUnit = DataGridSelectionUnit.CellOrRowHeader, HeadersVisibility = DataGridHeadersVisibility.All, EnableRowVirtualization = true, EnableColumnVirtualization = true };
@@ -30,7 +73,7 @@ public partial class QueryTabView : UserControl
         view.Sorting += (_, e) => { e.Handled = true; var ordinal = view.Columns.IndexOf(e.Column) - 1; if (ordinal >= 0) { var direction = e.Column.SortDirection == ListSortDirection.Ascending ? SortDirection.Descending : SortDirection.Ascending; state.ViewState = state.ViewState with { Sorts = new[] { new SortDescriptor(ordinal, direction, NullPlacement.Last, 0) } }; ApplyResultView(state); e.Column.SortDirection = direction == SortDirection.Ascending ? ListSortDirection.Ascending : ListSortDirection.Descending; } };
         view.Columns.Add(new DataGridTextColumn { Header = "#", Binding = new System.Windows.Data.Binding("RowIndex"), Width = 55 });
         for (var column = 0; column < store.Schema.Columns.Count; column++) view.Columns.Add(new DataGridTextColumn { Header = $"{store.Schema.Columns[column].Name}\n{store.Schema.Columns[column].PostgreSqlTypeName}", Binding = new System.Windows.Data.Binding($"Values[{column}]"), Width = new DataGridLength(1, DataGridLengthUnitType.Star), MinWidth = 80, MaxWidth = 420 });
-        state.Apply(rows.Select((row, index) => new GridRow(index, row.Cells.Select((cell, i) => new DefaultResultValueFormatter().FormatForDisplay(cell, store.Schema.Columns[i], new(512))).ToArray())).ToArray()); return new TabItem { Header = $"Results {store.ResultSetIndex + 1}", Content = view, Tag = state };
+        state.Apply(rows.Select((row, index) => new GridRow(index, row.Cells.Select((cell, i) => new DefaultResultValueFormatter().FormatForDisplay(cell, store.Schema.Columns[i], new(_settings.CellDisplayLimit))).ToArray())).ToArray()); return new TabItem { Header = $"Results {store.ResultSetIndex + 1}", Content = view, Tag = state };
     }
     private void ResultSearch_Click(object sender, RoutedEventArgs e) { if (ResultTabs.SelectedItem is TabItem { Tag: ResultTabState state }) { state.ViewState = state.ViewState with { Search = new(ResultSearchText.Text) }; ApplyResultView(state); } }
     private void ClearResultView_Click(object sender, RoutedEventArgs e) { ResultSearchText.Clear(); if (ResultTabs.SelectedItem is TabItem { Tag: ResultTabState state }) { state.ViewState = ResultViewState.Empty; ApplyResultView(state); foreach (var c in state.Grid.Columns) c.SortDirection = null; } }
@@ -53,7 +96,7 @@ public partial class QueryTabView : UserControl
     private void ReplaceAll_Click(object sender, RoutedEventArgs e) { if (string.IsNullOrEmpty(FindText.Text)) return; var service = new FindReplaceService(); var result = service.ReplaceAll(SqlText.Text, FindText.Text, ReplaceText.Text, new(), out var count); if (count > 0) SqlText.Text = result; StatusText.Text = $"{count} replacements made."; }
     private void GoToLine_Click(object sender, RoutedEventArgs e) { var dialog = new InputDialog("Go to line", "Line number:"); if (dialog.ShowDialog() != true || !int.TryParse(dialog.Value, out var line) || line < 1) { StatusText.Text = "Enter a positive line number."; return; } var index = 0; for (var i = 1; i < line && index < SqlText.Text.Length; i++) index = SqlText.Text.IndexOf('\n', index) + 1; if (index <= 0 && line > 1) { StatusText.Text = "Line is beyond the document."; return; } SqlText.Focus(); SqlText.CaretIndex = index; }
     private void SqlText_TextChanged(object sender, TextChangedEventArgs e) { _document.SqlText = SqlText.Text; if (_initializing) return; _document.MarkDirty(); DirtyChanged?.Invoke(this, EventArgs.Empty); }
-    private async void UserControl_KeyDown(object sender, System.Windows.Input.KeyEventArgs e) { if (e.Key == System.Windows.Input.Key.F5 || (e.Key == System.Windows.Input.Key.Enter && System.Windows.Input.Keyboard.Modifiers == System.Windows.Input.ModifierKeys.Control)) { _ = ExecuteAsync(); e.Handled = true; } else if (e.Key == System.Windows.Input.Key.Escape) _document.Cancel(); else if (e.Key == System.Windows.Input.Key.Space && System.Windows.Input.Keyboard.Modifiers == System.Windows.Input.ModifierKeys.Control) { var items = await new SqlCompletionEngine().GetCompletionsAsync(SqlText.Text, SqlText.CaretIndex, null); var menu = new ContextMenu(); foreach (var item in items.Take(30)) { var entry = new MenuItem { Header = $"{item.DisplayText} [{item.Kind}]" }; entry.Click += (_, _) => { var start = SqlText.CaretIndex; while (start > 0 && (char.IsLetterOrDigit(SqlText.Text[start - 1]) || SqlText.Text[start - 1] == '_')) start--; SqlText.Select(start, SqlText.CaretIndex - start); SqlText.SelectedText = item.InsertionText; }; menu.Items.Add(entry); } menu.IsOpen = true; e.Handled = true; } }
+    private async void UserControl_KeyDown(object sender, System.Windows.Input.KeyEventArgs e) { if (e.Key == System.Windows.Input.Key.F5 || (e.Key == System.Windows.Input.Key.Enter && System.Windows.Input.Keyboard.Modifiers == System.Windows.Input.ModifierKeys.Control)) { if (_document.CanExecute) await ExecuteAsync(); e.Handled = true; } else if (e.Key == System.Windows.Input.Key.Escape) { await _document.CancelAsync(); e.Handled = true; } else if (e.Key == System.Windows.Input.Key.Space && System.Windows.Input.Keyboard.Modifiers == System.Windows.Input.ModifierKeys.Control) { var items = await new SqlCompletionEngine().GetCompletionsAsync(SqlText.Text, SqlText.CaretIndex, null); var menu = new ContextMenu(); foreach (var item in items.Take(30)) { var entry = new MenuItem { Header = $"{item.DisplayText} [{item.Kind}]" }; entry.Click += (_, _) => { var start = SqlText.CaretIndex; while (start > 0 && (char.IsLetterOrDigit(SqlText.Text[start - 1]) || SqlText.Text[start - 1] == '_')) start--; SqlText.Select(start, SqlText.CaretIndex - start); SqlText.SelectedText = item.InsertionText; }; menu.Items.Add(entry); } menu.IsOpen = true; e.Handled = true; } }
     private async void BackupDatabase_Click(object sender, RoutedEventArgs e) { var dialog = new SaveFileDialog { Filter = "PostgreSQL custom backup (*.backup)|*.backup|Plain SQL (*.sql)|*.sql", DefaultExt = ".backup", AddExtension = true, FileName = "database.backup" }; if (dialog.ShowDialog() != true) return; try { var tools = new PostgreSqlToolLocator().Locate() ?? throw new InvalidOperationException("PostgreSQL tools could not be located."); var cs = Environment.GetEnvironmentVariable("PMS_CONNECTION_STRING") ?? throw new InvalidOperationException("PMS_CONNECTION_STRING is not configured."); var connection = DatabaseConnection.FromConnectionString(cs) with { Database = DatabaseText.Text }; var format = dialog.FileName.EndsWith(".sql", StringComparison.OrdinalIgnoreCase) ? BackupFormat.PlainSql : BackupFormat.Custom; var request = BackupCommandBuilder.Build(new(connection, dialog.FileName, format), tools); var result = await new ExternalProcessRunner().RunAsync(request, new Progress<ProcessOutputEntry>(x => MessagesText.AppendText(x.Line + Environment.NewLine))); StatusText.Text = result.Cancelled ? "Backup cancelled." : result.ExitCode == 0 ? "Backup completed." : $"Backup failed (exit {result.ExitCode})."; } catch (Exception ex) { MessagesText.Text = ex.Message; StatusText.Text = "Backup unavailable."; } }
     private async void RestoreDatabase_Click(object sender, RoutedEventArgs e) { var dialog = new OpenFileDialog { Filter = "PostgreSQL backups (*.backup;*.sql)|*.backup;*.sql|All files (*.*)|*.*" }; if (dialog.ShowDialog() != true) return; if (!_destructiveOperations.Confirm(new(DestructiveOperationKind.Restore, "Confirm restore", DatabaseText.Text, $"Restore from '{dialog.FileName}' may replace or modify database objects and data.", "Create and verify a current backup before continuing."))) return; try { var tools = new PostgreSqlToolLocator().Locate() ?? throw new InvalidOperationException("PostgreSQL tools could not be located."); var cs = Environment.GetEnvironmentVariable("PMS_CONNECTION_STRING") ?? throw new InvalidOperationException("PMS_CONNECTION_STRING is not configured."); var connection = DatabaseConnection.FromConnectionString(cs) with { Database = DatabaseText.Text }; var format = dialog.FileName.EndsWith(".sql", StringComparison.OrdinalIgnoreCase) ? BackupFormat.PlainSql : BackupFormat.Custom; var request = RestoreCommandBuilder.Build(new(connection, dialog.FileName, format), tools); var result = await new ExternalProcessRunner().RunAsync(request, new Progress<ProcessOutputEntry>(x => MessagesText.AppendText(x.Line + Environment.NewLine))); StatusText.Text = result.Cancelled ? "Restore cancelled." : result.ExitCode == 0 ? "Restore completed." : $"Restore failed (exit {result.ExitCode})."; } catch (Exception ex) { MessagesText.Text = ex.Message; StatusText.Text = "Restore unavailable."; } }
     private async void SecurityRoles_Click(object sender, RoutedEventArgs e) { try { var cs = Environment.GetEnvironmentVariable("PMS_CONNECTION_STRING") ?? throw new InvalidOperationException("PMS_CONNECTION_STRING is not configured."); var roles = await new NpgsqlSecurityService().LoadRolesAsync(cs); MessagesText.Text = string.Join(Environment.NewLine, roles.Select(r => $"{r.Name} {(r.CanLogin ? "LOGIN" : "GROUP")} {(r.IsSuperuser ? "SUPERUSER" : "")}")); StatusText.Text = $"Loaded {roles.Count:N0} roles."; } catch (Exception ex) { MessagesText.Text = ex.Message; StatusText.Text = "Security metadata unavailable."; } }

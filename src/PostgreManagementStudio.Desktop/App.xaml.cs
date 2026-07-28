@@ -13,8 +13,9 @@ public partial class App : System.Windows.Application
         base.OnStartup(e);
         try
         {
-            _services = ProductionServices.Build(ProductionServices.DefaultSettingsPath);
-            await _services.GetRequiredService<IApplicationSettingsStore>().LoadAsync();
+            var settingsStore = new JsonApplicationSettingsStore(ProductionServices.DefaultSettingsPath);
+            var loaded = await settingsStore.LoadAsync();
+            _services = ProductionServices.Build(ProductionServices.DefaultSettingsPath, loaded.Settings);
             var window = _services.GetRequiredService<MainWindow>();
             MainWindow = window;
             window.Show();

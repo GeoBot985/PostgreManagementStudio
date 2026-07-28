@@ -57,6 +57,12 @@ must be explicit. Cancellation must reach `OpenAsync`, command/reader calls,
 file operations, and external processes. Cancellation is an expected terminal
 state, not a generic failure.
 
+Sprint 36 adds an explicit exception for editor user-managed transactions:
+the executor may retain one serialized connection keyed by the immutable tab
+scope. That scope rejects connection-context changes, preserves PostgreSQL's
+aborted state until explicit `ROLLBACK`, and is disposed/reset when the editor
+closes. Implicit execution remains single-operation ownership.
+
 ## Compatibility
 
 Version/capability decisions belong in provider-neutral capability records

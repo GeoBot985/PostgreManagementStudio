@@ -32,6 +32,11 @@ $env:PMS_ADMIN_CONNECTION_STRING = "Host=localhost;Port=5432;Database=postgres;U
 
 See `docs/testing/integration-environment.md`.
 
+SQL execution lifecycle, transaction ownership, cancellation, bounded results,
+diagnostics, and privacy rules are documented in
+`docs/hardening/036-execution-contract.md`. Sprint 36 evidence is recorded in
+`docs/hardening/036-completion-report.md`.
+
 To run the gated perf suite:
 
 ```powershell

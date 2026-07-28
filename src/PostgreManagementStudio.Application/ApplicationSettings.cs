@@ -10,6 +10,11 @@ public sealed record ApplicationSettings
     public int Version { get; init; } = CurrentVersion;
     public string DefaultDatabase { get; init; } = "postgres";
     public int CommandTimeoutSeconds { get; init; } = 30;
+    public int CancellationTimeoutSeconds { get; init; } = 5;
+    public int DisplayedRowLimit { get; init; } = 10_000;
+    public int ResultWarningThreshold { get; init; } = 5_000;
+    public int CellDisplayLimit { get; init; } = 512;
+    public bool DiagnosticMode { get; init; }
     public int RecentFileLimit { get; init; } = 20;
 
     [JsonExtensionData]
@@ -20,6 +25,10 @@ public sealed record ApplicationSettings
         Version = CurrentVersion,
         DefaultDatabase = string.IsNullOrWhiteSpace(DefaultDatabase) ? "postgres" : DefaultDatabase.Trim(),
         CommandTimeoutSeconds = Math.Clamp(CommandTimeoutSeconds, 1, 86_400),
+        CancellationTimeoutSeconds = Math.Clamp(CancellationTimeoutSeconds, 1, 60),
+        DisplayedRowLimit = Math.Clamp(DisplayedRowLimit, 100, 1_000_000),
+        ResultWarningThreshold = Math.Clamp(ResultWarningThreshold, 100, 1_000_000),
+        CellDisplayLimit = Math.Clamp(CellDisplayLimit, 32, 32_768),
         RecentFileLimit = Math.Clamp(RecentFileLimit, 1, 200),
     };
 }

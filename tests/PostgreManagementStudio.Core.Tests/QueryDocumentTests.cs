@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using PostgreManagementStudio.Application;
 using PostgreManagementStudio.Core;
 
@@ -5,8 +6,237 @@ namespace PostgreManagementStudio.Core.Tests;
 
 public sealed class QueryDocumentTests
 {
-    [Fact] public async Task EmptySqlIsRejectedBeforeExecution() { var doc = new QueryDocument(new ResultExecutionService(new NoOpExecutor()), "Query 1") { ConnectionString = "local", SqlText = "  " }; await Assert.ThrowsAsync<ArgumentException>(() => doc.ExecuteAsync()); }
-    [Fact] public void DuplicateExecutionIsRejected() { var doc = new QueryDocument(new ResultExecutionService(new NoOpExecutor()), "Query 1") { ConnectionString = "local", SqlText = "SELECT 1" }; Assert.Equal(QueryDocumentExecutionState.Idle, doc.State); }
-    [Fact] public void TabsAreIndependentAndDirtyTabsNeedDiscardConsent() { var manager = new QueryTabManager(new ResultExecutionService(new NoOpExecutor())); var first = manager.Open("a"); var second = manager.Open("b", "other"); first.SqlText = "SELECT 1"; first.MarkDirty(); Assert.Equal("b", second.ConnectionString); Assert.False(manager.TryClose(first, false)); Assert.True(manager.TryClose(first, true)); Assert.Single(manager.Documents); }
-    private sealed class NoOpExecutor : IQueryExecutor { public async IAsyncEnumerable<QueryExecutionEvent> ExecuteAsync(QueryRequest request, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default) { await Task.CompletedTask; yield return new ExecutionStarted(DateTimeOffset.UtcNow); yield return new ExecutionCompleted(TimeSpan.Zero, 0); } }
+    private const string ConnectionA = "Host=server-a;Port=5432;Database=db_a;Username=user_a;SSL Mode=Require;Password=secret-a";
+    private const string ConnectionB = "Host=server-b;Port=5433;Database=db_b;Username=user_b;Password=secret-b";
+
+    [Fact]
+    public void LifecycleRejectsInvalidTransitionsAndStaleCompletions()
+    {
+        var lifecycle = new QueryExecutionLifecycle();
+        Assert.False(lifecycle.RequestCancellation(Guid.NewGuid()));
+        var first = lifecycle.Prepare();
+        Assert.True(lifecycle.MarkExecuting(first));
+        Assert.False(lifecycle.Finish(Guid.NewGuid(), QueryDocumentExecutionState.Completed));
+        Assert.True(lifecycle.RequestCancellation(first));
+        Assert.True(lifecycle.RequestCancellation(first));
+        Assert.False(lifecycle.Finish(first, QueryDocumentExecutionState.Completed));
+        Assert.True(lifecycle.Finish(first, QueryDocumentExecutionState.Cancelled));
+        Assert.False(lifecycle.RequestCancellation(first));
+        lifecycle.Reset();
+        Assert.Equal(QueryDocumentExecutionState.Idle, lifecycle.State);
+    }
+
+    [Fact]
+    public async Task EmptySqlAndUnresolvedConnectionAreRejectedBeforeExecution()
+    {
+        var doc = Document(new NoOpExecutor(), "");
+        doc.SqlText = " ";
+        await Assert.ThrowsAsync<ArgumentException>(() => doc.ExecuteAsync());
+        doc.SqlText = "SELECT 1";
+        await Assert.ThrowsAsync<InvalidOperationException>(() => doc.ExecuteAsync());
+        doc.ConnectionString = ConnectionA;
+        doc.ConnectionProfileId = "";
+        await Assert.ThrowsAsync<InvalidOperationException>(() => doc.ExecuteAsync());
+    }
+
+    [Fact]
+    public async Task DuplicateExecutionIsRejectedAndCancellationIsIdempotent()
+    {
+        var executor = new ControlledExecutor();
+        var doc = Document(executor, ConnectionA);
+        var running = doc.ExecuteAsync();
+        await executor.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(QueryDocumentExecutionState.Executing, doc.State);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => doc.ExecuteAsync());
+        doc.Cancel();
+        doc.Cancel();
+        Assert.True(await doc.CancelAsync());
+        await running;
+        Assert.Equal(QueryDocumentExecutionState.Cancelled, doc.State);
+        Assert.False(doc.CanCancel);
+    }
+
+    [Fact]
+    public async Task ExecutionUsesImmutableConnectionAndDatabaseSnapshot()
+    {
+        var executor = new ControlledExecutor(ignoreCancellation: true);
+        var doc = Document(executor, ConnectionA);
+        doc.ConnectionProfileId = "profile-a";
+        doc.Database = "db_a";
+        doc.SqlText = "SELECT 41";
+        var running = doc.ExecuteAsync();
+        await executor.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        doc.ConnectionString = ConnectionB;
+        doc.ConnectionProfileId = "profile-b";
+        doc.Database = "db_b";
+        doc.SqlText = "SELECT 99";
+        executor.Release();
+        await running;
+
+        var requestValues = new System.Data.Common.DbConnectionStringBuilder { ConnectionString = executor.Request!.ConnectionString };
+        Assert.Equal("server-a", requestValues["host"]);
+        Assert.Equal("db_a", requestValues["database"]);
+        Assert.Equal("SELECT 41", executor.Request.Sql);
+        Assert.Equal("profile-a", doc.LastExecutionContext!.ConnectionProfileId);
+        Assert.Equal("server-a:5432", doc.LastExecutionContext.ServerIdentity);
+        Assert.Equal("db_a", doc.LastExecutionContext.Database);
+        Assert.Equal("user_a", doc.LastExecutionContext.Username);
+        Assert.Equal(QueryDocumentExecutionState.Completed, doc.State);
+    }
+
+    [Fact]
+    public async Task CancellationTimeoutIsControlledAndLateCompletionCannotBecomeCompleted()
+    {
+        var executor = new ControlledExecutor(ignoreCancellation: true);
+        var doc = Document(executor, ConnectionA);
+        doc.CancellationTimeout = TimeSpan.FromMilliseconds(25);
+        var running = doc.ExecuteAsync();
+        await executor.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.False(await doc.CancelAsync());
+        Assert.Contains("did not complete", doc.Message);
+        executor.Release();
+        await running;
+        Assert.Equal(QueryDocumentExecutionState.Cancelled, doc.State);
+    }
+
+    [Fact]
+    public async Task TelemetryContainsContextAndCountsButNoSqlOrConnectionString()
+    {
+        var telemetry = new RecordingTelemetry();
+        var doc = new QueryDocument(new ResultExecutionService(new NoOpExecutor()), "Query 1", telemetry)
+        {
+            ConnectionString = ConnectionA,
+            ConnectionProfileId = "profile-a",
+            Database = "db_a",
+            SqlText = "SELECT 'sensitive literal'",
+        };
+        await doc.ExecuteAsync();
+        var item = Assert.Single(telemetry.Items);
+        Assert.Equal(doc.TabId, item.EditorTabId);
+        Assert.Equal("profile-a", item.ConnectionProfileId);
+        Assert.Equal("db_a", item.Database);
+        Assert.Equal(QueryDocumentExecutionState.Completed, item.FinalState);
+        Assert.DoesNotContain("sensitive", item.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("secret-a", item.ToString(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task TabsExecuteIndependentlyAndActiveTabCannotClose()
+    {
+        var executor = new PerRequestGateExecutor();
+        var manager = new QueryTabManager(new ResultExecutionService(executor));
+        var first = manager.Open(ConnectionA, "db_a");
+        var second = manager.Open(ConnectionB, "db_b");
+        first.SqlText = "SELECT 1";
+        second.SqlText = "SELECT 2";
+
+        var firstRun = first.ExecuteAsync();
+        var secondRun = second.ExecuteAsync();
+        await executor.BothStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.False(manager.TryClose(first, true));
+        Assert.NotEqual(first.LastExecutionContext!.ExecutionId, second.LastExecutionContext!.ExecutionId);
+        Assert.Equal("db_a", first.LastExecutionContext.Database);
+        Assert.Equal("db_b", second.LastExecutionContext.Database);
+
+        executor.Release();
+        await Task.WhenAll(firstRun, secondRun);
+        Assert.True(manager.TryClose(first, true));
+        Assert.Single(manager.Documents);
+    }
+
+    [Fact]
+    public void DirtyTabsNeedDiscardConsent()
+    {
+        var manager = new QueryTabManager(new ResultExecutionService(new NoOpExecutor()));
+        var first = manager.Open(ConnectionA);
+        manager.Open(ConnectionB, "other");
+        first.MarkDirty();
+        Assert.False(manager.TryClose(first, false));
+        Assert.True(manager.TryClose(first, true));
+    }
+
+    [Fact]
+    public void ErrorPresentationPreservesDiagnosticsAndRedactsSecrets()
+    {
+        var error = new DatabaseError(
+            "duplicate value Password=hunter2",
+            "ERROR",
+            "23505",
+            "Key already exists",
+            "Choose another key",
+            12,
+            "public",
+            "items",
+            "id",
+            "items_pkey",
+            "_bt_check_unique",
+            DatabaseErrorKind.Constraint,
+            SourceFile: "nbtinsert.c",
+            SourceLine: 666);
+        var normal = QueryErrorPresentation.Format(error);
+        Assert.Contains("SQLSTATE: 23505", normal);
+        Assert.Contains("Constraint: items_pkey", normal);
+        Assert.Contains("Password=<redacted>", normal);
+        Assert.Equal("Password=<redacted>;Host=local", SecretRedactor.Redact("Password=\"two words\";Host=local"));
+        Assert.DoesNotContain("nbtinsert.c", normal);
+        Assert.Contains("nbtinsert.c", QueryErrorPresentation.Format(error, diagnosticMode: true));
+    }
+
+    private static QueryDocument Document(IQueryExecutor executor, string connection)
+        => new(new ResultExecutionService(executor), "Query 1")
+        {
+            ConnectionString = connection,
+            SqlText = "SELECT 1",
+        };
+
+    private sealed class NoOpExecutor : IQueryExecutor
+    {
+        public async IAsyncEnumerable<QueryExecutionEvent> ExecuteAsync(QueryRequest request, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.CompletedTask;
+            yield return new ExecutionStarted(DateTimeOffset.UtcNow);
+            yield return new ExecutionCompleted(TimeSpan.Zero, 0);
+        }
+    }
+
+    private sealed class ControlledExecutor(bool ignoreCancellation = false) : IQueryExecutor
+    {
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public QueryRequest? Request { get; private set; }
+        public void Release() => _release.TrySetResult();
+
+        public async IAsyncEnumerable<QueryExecutionEvent> ExecuteAsync(QueryRequest request, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            Request = request;
+            yield return new ExecutionStarted(DateTimeOffset.UtcNow);
+            Started.TrySetResult();
+            if (ignoreCancellation) await _release.Task;
+            else await _release.Task.WaitAsync(cancellationToken);
+            yield return new ExecutionCompleted(TimeSpan.Zero, 0);
+        }
+    }
+
+    private sealed class PerRequestGateExecutor : IQueryExecutor
+    {
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _started;
+        public TaskCompletionSource BothStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public void Release() => _release.TrySetResult();
+
+        public async IAsyncEnumerable<QueryExecutionEvent> ExecuteAsync(QueryRequest request, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            yield return new ExecutionStarted(DateTimeOffset.UtcNow);
+            if (Interlocked.Increment(ref _started) == 2) BothStarted.TrySetResult();
+            await _release.Task.WaitAsync(cancellationToken);
+            yield return new ExecutionCompleted(TimeSpan.Zero, 0);
+        }
+    }
+
+    private sealed class RecordingTelemetry : IQueryExecutionTelemetry
+    {
+        public List<QueryExecutionDiagnostic> Items { get; } = new();
+        public void Record(QueryExecutionDiagnostic diagnostic) => Items.Add(diagnostic);
+    }
 }

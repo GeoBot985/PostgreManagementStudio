@@ -87,3 +87,13 @@ apply to the major capability represented by each Sprint 34 row.
 | 31 | A | B pg_stat_statements | B dashboard | Blocked |
 | 32 | A | A plan | B structured explorer | Blocked |
 | 33 | A | seeded metadata indirect | B collector/workspace | Blocked |
+
+## Sprint 36 SQL editor hardening update
+
+Sprint 4 query execution and Sprint 7 result presentation now have explicit
+execution-ID lifecycle control, immutable connection/database snapshots,
+bounded 10,000-row production retention, structured PostgreSQL errors,
+provider-level cancellation, tab-scoped user transactions, and deterministic
+shutdown disposal. Live coverage includes ten concurrent executions, streaming
+cancellation, transaction abort/rollback, backend termination, missing
+database, timeout, unusual values, multi-statement ordering, and truncation.

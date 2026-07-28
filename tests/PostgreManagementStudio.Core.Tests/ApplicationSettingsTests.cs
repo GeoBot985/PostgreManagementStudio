@@ -23,6 +23,10 @@ public sealed class ApplicationSettingsTests
             {
                 DefaultDatabase = " regression ",
                 CommandTimeoutSeconds = -5,
+                CancellationTimeoutSeconds = 999,
+                DisplayedRowLimit = 1,
+                ResultWarningThreshold = 2_000_000,
+                CellDisplayLimit = 1,
                 RecentFileLimit = 999,
                 AdditionalValues = new() { ["futureSetting"] = extraDocument.RootElement.Clone() },
             };
@@ -31,6 +35,10 @@ public sealed class ApplicationSettingsTests
 
             Assert.Equal("regression", reloaded.Settings.DefaultDatabase);
             Assert.Equal(1, reloaded.Settings.CommandTimeoutSeconds);
+            Assert.Equal(60, reloaded.Settings.CancellationTimeoutSeconds);
+            Assert.Equal(100, reloaded.Settings.DisplayedRowLimit);
+            Assert.Equal(1_000_000, reloaded.Settings.ResultWarningThreshold);
+            Assert.Equal(32, reloaded.Settings.CellDisplayLimit);
             Assert.Equal(200, reloaded.Settings.RecentFileLimit);
             Assert.Equal("preserved", reloaded.Settings.AdditionalValues["futureSetting"].GetString());
         }
