@@ -25,3 +25,26 @@ Sorted by release blocker, severity, likelihood, and user impact.
 
 No Critical finding is represented as deferred without a release-blocking
 status. High findings have an assigned hardening sprint.
+
+## Sprint 35 updates
+
+- `TD-034-004` is resolved: the App and tests share validated
+  `ProductionServices.Build` registrations, with no production test doubles.
+- `TD-034-002` is reduced: Object Explorer is reachable and uses the production
+  metadata adapter, but normal saved-connection management remains a blocker.
+- `TD-034-006` is reduced: production composition and STA shell lifecycle are
+  automated; full command/view automation remains.
+- `TD-034-012` is reduced: atomic version-tolerant application settings now
+  exist; query-performance history persistence remains.
+- `TD-034-014` is reduced through isolated live coverage for metadata,
+  transactions, permissions, activity, search, plans, timeout, and backup.
+
+New evidence-based blockers:
+
+| ID | Blocker | Severity | Area | Evidence | Recommended sprint |
+|---|---|---|---|---|---|
+| TD-035-001 | Yes | High | Transactions | query documents open a new executor connection per run and cannot retain explicit editor transaction state | 36 |
+| TD-035-002 | No | High | Destructive confirmation | shared injectable guard now covers restore, maintenance, and actual-plan execution; extend it as session/schema mutation UIs become reachable | 38 |
+| TD-035-003 | Yes | High | Connection lifecycle | no automated server-loss/disconnect/reconnect workspace state machine | 36 |
+| TD-035-004 | Yes | High | Restore | no disposable real restore end-to-end regression | 36/38 |
+| TD-035-005 | Yes | High | Query performance | no production pg_stat_statements collector/workspace | 35 follow-up/36 |

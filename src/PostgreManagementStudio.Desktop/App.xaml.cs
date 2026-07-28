@@ -1,12 +1,34 @@
-﻿using System.Configuration;
-using System.Data;
+using Microsoft.Extensions.DependencyInjection;
 using System.Windows;
+using PostgreManagementStudio.Application;
 
 namespace PostgreManagementStudio.Desktop;
 
-/// <summary>
-/// Interaction logic for App.xaml
-/// </summary>
 public partial class App : System.Windows.Application
 {
+    private ServiceProvider? _services;
+
+    protected override async void OnStartup(StartupEventArgs e)
+    {
+        base.OnStartup(e);
+        try
+        {
+            _services = ProductionServices.Build(ProductionServices.DefaultSettingsPath);
+            await _services.GetRequiredService<IApplicationSettingsStore>().LoadAsync();
+            var window = _services.GetRequiredService<MainWindow>();
+            MainWindow = window;
+            window.Show();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"PostgreManagementStudio could not start.\n\n{ex.Message}", "Startup failed", MessageBoxButton.OK, MessageBoxImage.Error);
+            Shutdown(1);
+        }
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        _services?.Dispose();
+        base.OnExit(e);
+    }
 }

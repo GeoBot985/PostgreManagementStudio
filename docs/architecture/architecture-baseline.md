@@ -21,9 +21,9 @@ forbidden and protected by `ArchitectureBoundaryTests`.
 
 ## Composition and lifetimes
 
-`Desktop` is the only composition root. The current host uses explicit
-construction; this is a known release blocker because registrations and
-lifetimes cannot yet be validated centrally.
+`Desktop` is the only composition root. `ProductionServices.Build` is the
+authoritative registration path shared by the application and production
+composition tests. Registration validation is mandatory.
 
 Target lifetimes:
 
@@ -63,6 +63,9 @@ Version/capability decisions belong in provider-neutral capability records
 populated by Postgres adapters. Unknown newer PostgreSQL versions must use the
 latest known-safe behavior; unsupported older versions must fail clearly.
 Scattered major-version literals are debt and may not be added.
+
+PostgreSQL 18 is the primary hardening version and PostgreSQL 14 is the minimum
+intended release baseline pending the Sprint 40 compatibility matrix.
 
 ## Errors, logging, and settings
 

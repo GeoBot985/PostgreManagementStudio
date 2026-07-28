@@ -21,6 +21,17 @@ dotnet build --configuration Release
 dotnet test --configuration Release
 ```
 
+For the isolated PostgreSQL release regression, including real metadata,
+permissions, transactions, monitoring, plans, backup, performance, UI smoke,
+coverage, and cleanup:
+
+```powershell
+$env:PMS_ADMIN_CONNECTION_STRING = "Host=localhost;Port=5432;Database=postgres;Username=postgres;Password=<local-test-password>"
+.\scripts\test-release.ps1
+```
+
+See `docs/testing/integration-environment.md`.
+
 To run the gated perf suite:
 
 ```powershell

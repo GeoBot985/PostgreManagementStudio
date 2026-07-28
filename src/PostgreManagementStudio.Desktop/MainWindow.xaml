@@ -1,3 +1,23 @@
-<Window x:Class="PostgreManagementStudio.Desktop.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="PostgreManagementStudio" Height="760" Width="1100" Closing="Window_Closing">
- <DockPanel Margin="12"><StackPanel DockPanel.Dock="Top" Orientation="Horizontal"><TextBlock Text="PostgreManagementStudio" FontSize="22" VerticalAlignment="Center"/><Button Content="New query" Click="NewQuery_Click" Margin="20,0,0,0" Padding="12,6"/></StackPanel><TabControl x:Name="QueryTabs" Margin="0,12,0,0" SelectionChanged="QueryTabs_SelectionChanged"/></DockPanel>
+<Window x:Class="PostgreManagementStudio.Desktop.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="PostgreManagementStudio" Height="760" Width="1100"
+        Closing="Window_Closing" Loaded="Window_Loaded">
+  <DockPanel Margin="12">
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal">
+      <TextBlock Text="PostgreManagementStudio" FontSize="22" VerticalAlignment="Center"/>
+      <Button Content="New query" Click="NewQuery_Click" Margin="20,0,0,0" Padding="12,6"/>
+      <Button Content="Refresh Object Explorer" Click="RefreshObjectExplorer_Click" Margin="8,0,0,0" Padding="12,6"/>
+    </StackPanel>
+    <Grid Margin="0,12,0,0">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="260"/>
+        <ColumnDefinition Width="8"/>
+        <ColumnDefinition Width="*"/>
+      </Grid.ColumnDefinitions>
+      <TreeView x:Name="ObjectExplorerTree"/>
+      <GridSplitter Grid.Column="1" Width="8" HorizontalAlignment="Stretch"/>
+      <TabControl x:Name="QueryTabs" Grid.Column="2" SelectionChanged="QueryTabs_SelectionChanged"/>
+    </Grid>
+  </DockPanel>
 </Window>

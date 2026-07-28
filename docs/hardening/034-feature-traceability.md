@@ -46,3 +46,44 @@ The service implementations above preserve useful approved work. They should
 not be deleted or marked “complete and reachable” without production
 composition and workflow tests. Sprint 35 should turn this matrix into
 command-level regression tests, starting with rows marked as blockers.
+
+## Sprint 35 automated coverage update
+
+`A` automated, `M` manual, `B` blocked, `—` not applicable. Classifications
+apply to the major capability represented by each Sprint 34 row.
+
+| Sprint | Unit/component | PostgreSQL/OS integration | UI integration | Result |
+|---:|---|---|---|---|
+| 1 | A | A | A reachability | Verified |
+| 2 | A | A + performance | A materialization | Verified |
+| 3 | A | A typed seed | M clipboard | Partial |
+| 4 | A | A execution | A shell/editor lifecycle | Verified except persistent transaction |
+| 5 | A | filesystem A | M commands | Partial |
+| 6 | A | A metadata | A Object Explorer path | Verified |
+| 7 | A | A typed seed | A grid creation | Verified |
+| 8 | A | filesystem A | M dialog | Partial |
+| 9 | A | A typed data | M interactions | Partial |
+| 10 | A | A pg_dump | A command reachability | Backup verified; restore B |
+| 11 | A | A role permissions | M mutations | Partial |
+| 12 | A | A pg_stat_activity | A reachability | Verified snapshot |
+| 13 | A | B destructive execution | M | Blocked safety |
+| 14 | A | A import/query and file export | M wizard | Partial |
+| 15 | A | A object search | M navigation | Partial |
+| 16 | A | A tool/process | M manager | Partial |
+| 17 | A | A estimated plan | A reachability | Verified estimated |
+| 18 | A | B destructive session action | M | Blocked safety |
+| 19 | A | A extractor | B distinct endpoints | Blocked |
+| 20 | A | — | B workspace | Blocked |
+| 21 | A | partial | B wizard | Blocked |
+| 22 | A | A activity | B workspace/actions | Blocked |
+| 23 | A | B collector | B workspace | Blocked |
+| 24 | A | A plan | B diagnostics UI | Blocked |
+| 25 | A | seeded metadata indirect | B collector/workspace | Blocked |
+| 26 | A | A plan | B explorer UI | Blocked |
+| 27 | A | — | B comparison workspace | Blocked |
+| 28 | A | — | B persistence/workspace | Blocked |
+| 29 | A | A activity | B live workspace | Blocked |
+| 30 | A | A activity | B dedicated monitor | Blocked |
+| 31 | A | B pg_stat_statements | B dashboard | Blocked |
+| 32 | A | A plan | B structured explorer | Blocked |
+| 33 | A | seeded metadata indirect | B collector/workspace | Blocked |
