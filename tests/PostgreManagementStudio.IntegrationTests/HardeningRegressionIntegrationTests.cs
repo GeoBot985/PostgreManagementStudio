@@ -154,10 +154,11 @@ public sealed class HardeningRegressionIntegrationTests
         var destination = Path.Combine(Path.GetTempPath(), $"pms-regression-{Guid.NewGuid():N}.backup");
         try
         {
+            var databaseConnection = DatabaseConnection.FromConnectionString(ConnectionString);
             var request = BackupCommandBuilder.Build(
-                new BackupOptions(DatabaseConnection.FromConnectionString(ConnectionString), destination, BackupFormat.Custom),
+                new BackupOptions(databaseConnection, destination, BackupFormat.Custom),
                 tools!);
-            Assert.DoesNotContain(request.Arguments, x => x.Contains("Password", StringComparison.OrdinalIgnoreCase));
+            Assert.DoesNotContain(databaseConnection.Password!, request.Arguments);
             Assert.DoesNotContain(request.Arguments, x => x.Contains("regression-password", StringComparison.OrdinalIgnoreCase));
             var result = await new ExternalProcessRunner().RunAsync(request);
             Assert.Equal(0, result.ExitCode);

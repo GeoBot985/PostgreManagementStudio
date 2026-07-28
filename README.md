@@ -47,6 +47,12 @@ permission, and diagnostics rules are documented in
 `docs/hardening/038-metadata-contract.md`. Sprint 38 evidence is recorded in
 `docs/hardening/038-completion-report.md`.
 
+Backup/restore lifecycle, immutable plans, tool and credential handling,
+atomic output, destructive confirmation, process cancellation, and recovery
+rules are documented in `docs/hardening/039-backup-restore-contract.md`.
+Sprint 39 evidence is recorded in
+`docs/hardening/039-completion-report.md`.
+
 To run the gated perf suite:
 
 ```powershell

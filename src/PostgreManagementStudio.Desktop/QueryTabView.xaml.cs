@@ -13,8 +13,15 @@ namespace PostgreManagementStudio.Desktop;
 public partial class QueryTabView : UserControl
 {
     private readonly QueryDocument _document; private readonly DestructiveOperationGuard _destructiveOperations; private readonly ApplicationSettings _settings; private IResultSession? _session; private bool _initializing = true; public event EventHandler? DirtyChanged;
+    private readonly BackupRestoreOperationService _backupRestore;
+    private readonly PostgreSqlToolDiscoveryService _backupTools;
+    private readonly BackupInspectionService _backupInspection;
+    private readonly BackupRestoreOperationController _backupController = new();
     private readonly DocumentFileService _fileService = new(); private SqlDocument _file = new() { DisplayName = "Query" };
-    public QueryTabView(QueryDocument document, DestructiveOperationGuard destructiveOperations, ApplicationSettings settings) { InitializeComponent(); _document = document; _destructiveOperations = destructiveOperations; _settings = settings; _document.ExecutionStateChanged += Document_ExecutionStateChanged; Unloaded += (_, _) => _document.ExecutionStateChanged -= Document_ExecutionStateChanged; SqlText.Text = document.SqlText; DatabaseText.Text = document.Database; _initializing = false; UpdateCommandState(); }
+    public QueryTabView(QueryDocument document, DestructiveOperationGuard destructiveOperations,
+        ApplicationSettings settings, BackupRestoreOperationService backupRestore,
+        PostgreSqlToolDiscoveryService backupTools, BackupInspectionService backupInspection)
+    { InitializeComponent(); _document = document; _destructiveOperations = destructiveOperations; _settings = settings; _backupRestore = backupRestore; _backupTools = backupTools; _backupInspection = backupInspection; _document.ExecutionStateChanged += Document_ExecutionStateChanged; Unloaded += async (_, _) => { _document.ExecutionStateChanged -= Document_ExecutionStateChanged; await _backupController.DisposeAsync(); }; SqlText.Text = document.SqlText; DatabaseText.Text = document.Database; _initializing = false; UpdateCommandState(); }
     private async void Execute_Click(object sender, RoutedEventArgs e) { await ExecuteAsync(); }
     private async Task ExecuteAsync()
     {
@@ -44,7 +51,12 @@ public partial class QueryTabView : UserControl
         catch (Exception ex) { StatusText.Text = "Error"; MessagesText.Text = SecretRedactor.Redact(ex.Message); }
         finally { UpdateCommandState(); DirtyChanged?.Invoke(this, EventArgs.Empty); }
     }
-    private async void Cancel_Click(object sender, RoutedEventArgs e) => await _document.CancelAsync();
+    private async void Cancel_Click(object sender, RoutedEventArgs e)
+    {
+        if (_backupController.CanCancel) _backupController.Cancel();
+        if (_document.CanCancel) await _document.CancelAsync();
+        UpdateCommandState();
+    }
     private void Document_ExecutionStateChanged(object? sender, EventArgs e)
     {
         if (!Dispatcher.CheckAccess()) { _ = Dispatcher.BeginInvoke(UpdateCommandState); return; }
@@ -53,8 +65,8 @@ public partial class QueryTabView : UserControl
     private void UpdateCommandState()
     {
         ExecuteButton.IsEnabled = _document.CanExecute;
-        CancelButton.IsEnabled = _document.CanCancel;
-        DatabaseText.IsEnabled = !_document.IsExecuting;
+        CancelButton.IsEnabled = _document.CanCancel || _backupController.CanCancel;
+        DatabaseText.IsEnabled = !_document.IsExecuting && !_backupController.CanCancel;
         if (_document.IsExecuting) StatusText.Text = _document.Message;
     }
     private void HighlightErrorPosition(DatabaseError? error, string? selectedSql)
@@ -97,8 +109,95 @@ public partial class QueryTabView : UserControl
     private void GoToLine_Click(object sender, RoutedEventArgs e) { var dialog = new InputDialog("Go to line", "Line number:"); if (dialog.ShowDialog() != true || !int.TryParse(dialog.Value, out var line) || line < 1) { StatusText.Text = "Enter a positive line number."; return; } var index = 0; for (var i = 1; i < line && index < SqlText.Text.Length; i++) index = SqlText.Text.IndexOf('\n', index) + 1; if (index <= 0 && line > 1) { StatusText.Text = "Line is beyond the document."; return; } SqlText.Focus(); SqlText.CaretIndex = index; }
     private void SqlText_TextChanged(object sender, TextChangedEventArgs e) { _document.SqlText = SqlText.Text; if (_initializing) return; _document.MarkDirty(); DirtyChanged?.Invoke(this, EventArgs.Empty); }
     private async void UserControl_KeyDown(object sender, System.Windows.Input.KeyEventArgs e) { if (e.Key == System.Windows.Input.Key.F5 || (e.Key == System.Windows.Input.Key.Enter && System.Windows.Input.Keyboard.Modifiers == System.Windows.Input.ModifierKeys.Control)) { if (_document.CanExecute) await ExecuteAsync(); e.Handled = true; } else if (e.Key == System.Windows.Input.Key.Escape) { await _document.CancelAsync(); e.Handled = true; } else if (e.Key == System.Windows.Input.Key.Space && System.Windows.Input.Keyboard.Modifiers == System.Windows.Input.ModifierKeys.Control) { var items = await new SqlCompletionEngine().GetCompletionsAsync(SqlText.Text, SqlText.CaretIndex, null); var menu = new ContextMenu(); foreach (var item in items.Take(30)) { var entry = new MenuItem { Header = $"{item.DisplayText} [{item.Kind}]" }; entry.Click += (_, _) => { var start = SqlText.CaretIndex; while (start > 0 && (char.IsLetterOrDigit(SqlText.Text[start - 1]) || SqlText.Text[start - 1] == '_')) start--; SqlText.Select(start, SqlText.CaretIndex - start); SqlText.SelectedText = item.InsertionText; }; menu.Items.Add(entry); } menu.IsOpen = true; e.Handled = true; } }
-    private async void BackupDatabase_Click(object sender, RoutedEventArgs e) { var dialog = new SaveFileDialog { Filter = "PostgreSQL custom backup (*.backup)|*.backup|Plain SQL (*.sql)|*.sql", DefaultExt = ".backup", AddExtension = true, FileName = "database.backup" }; if (dialog.ShowDialog() != true) return; try { var tools = new PostgreSqlToolLocator().Locate() ?? throw new InvalidOperationException("PostgreSQL tools could not be located."); var cs = Environment.GetEnvironmentVariable("PMS_CONNECTION_STRING") ?? throw new InvalidOperationException("PMS_CONNECTION_STRING is not configured."); var connection = DatabaseConnection.FromConnectionString(cs) with { Database = DatabaseText.Text }; var format = dialog.FileName.EndsWith(".sql", StringComparison.OrdinalIgnoreCase) ? BackupFormat.PlainSql : BackupFormat.Custom; var request = BackupCommandBuilder.Build(new(connection, dialog.FileName, format), tools); var result = await new ExternalProcessRunner().RunAsync(request, new Progress<ProcessOutputEntry>(x => MessagesText.AppendText(x.Line + Environment.NewLine))); StatusText.Text = result.Cancelled ? "Backup cancelled." : result.ExitCode == 0 ? "Backup completed." : $"Backup failed (exit {result.ExitCode})."; } catch (Exception ex) { MessagesText.Text = ex.Message; StatusText.Text = "Backup unavailable."; } }
-    private async void RestoreDatabase_Click(object sender, RoutedEventArgs e) { var dialog = new OpenFileDialog { Filter = "PostgreSQL backups (*.backup;*.sql)|*.backup;*.sql|All files (*.*)|*.*" }; if (dialog.ShowDialog() != true) return; if (!_destructiveOperations.Confirm(new(DestructiveOperationKind.Restore, "Confirm restore", DatabaseText.Text, $"Restore from '{dialog.FileName}' may replace or modify database objects and data.", "Create and verify a current backup before continuing."))) return; try { var tools = new PostgreSqlToolLocator().Locate() ?? throw new InvalidOperationException("PostgreSQL tools could not be located."); var cs = Environment.GetEnvironmentVariable("PMS_CONNECTION_STRING") ?? throw new InvalidOperationException("PMS_CONNECTION_STRING is not configured."); var connection = DatabaseConnection.FromConnectionString(cs) with { Database = DatabaseText.Text }; var format = dialog.FileName.EndsWith(".sql", StringComparison.OrdinalIgnoreCase) ? BackupFormat.PlainSql : BackupFormat.Custom; var request = RestoreCommandBuilder.Build(new(connection, dialog.FileName, format), tools); var result = await new ExternalProcessRunner().RunAsync(request, new Progress<ProcessOutputEntry>(x => MessagesText.AppendText(x.Line + Environment.NewLine))); StatusText.Text = result.Cancelled ? "Restore cancelled." : result.ExitCode == 0 ? "Restore completed." : $"Restore failed (exit {result.ExitCode})."; } catch (Exception ex) { MessagesText.Text = ex.Message; StatusText.Text = "Restore unavailable."; } }
+    private async void BackupDatabase_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new SaveFileDialog
+        {
+            Filter = "PostgreSQL custom backup (*.backup)|*.backup|Plain SQL (*.sql)|*.sql|Tar archive (*.tar)|*.tar",
+            DefaultExt = ".backup", AddExtension = true, FileName = "database.backup",
+        };
+        if (dialog.ShowDialog() != true) return;
+        try
+        {
+            MessagesText.Clear();
+            StatusText.Text = "Validating backup…";
+            var cs = Environment.GetEnvironmentVariable("PMS_CONNECTION_STRING")
+                ?? throw new InvalidOperationException("PMS_CONNECTION_STRING is not configured.");
+            var connection = DatabaseConnection.FromConnectionString(cs) with { Database = DatabaseText.Text };
+            var tools = await _backupTools.DiscoverAsync();
+            var format = dialog.FilterIndex switch
+            {
+                2 => BackupFormat.PlainSql,
+                3 => BackupFormat.Tar,
+                _ => BackupFormat.Custom,
+            };
+            var plan = BackupOperationPlanFactory.CreateBackup("environment", connection.Host,
+                new(connection, dialog.FileName, format), tools, null);
+            UpdateCommandState();
+            var result = await _backupRestore.ExecuteBackupAsync(plan, _backupController,
+                new Progress<ProcessOutputEntry>(AppendBackupOutput));
+            ShowBackupRestoreResult(result, "Backup");
+        }
+        catch (Exception ex)
+        {
+            MessagesText.Text = BackupSecretRedactor.Redact(ex.Message);
+            StatusText.Text = "Backup unavailable.";
+        }
+        finally { UpdateCommandState(); }
+    }
+
+    private async void RestoreDatabase_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Filter = "PostgreSQL backups (*.backup;*.sql;*.tar)|*.backup;*.sql;*.tar|All files (*.*)|*.*",
+        };
+        if (dialog.ShowDialog() != true) return;
+        try
+        {
+            MessagesText.Clear();
+            StatusText.Text = "Inspecting backup…";
+            var cs = Environment.GetEnvironmentVariable("PMS_CONNECTION_STRING")
+                ?? throw new InvalidOperationException("PMS_CONNECTION_STRING is not configured.");
+            var connection = DatabaseConnection.FromConnectionString(cs) with { Database = DatabaseText.Text };
+            var tools = await _backupTools.DiscoverAsync();
+            var detected = BackupInspectionService.DetectFormat(dialog.FileName)
+                ?? throw new BackupRestoreException(BackupRestoreFailureCategory.InvalidBackup,
+                    "The selected file is not a recognised PostgreSQL backup.");
+            var inspection = await _backupInspection.InspectAsync(dialog.FileName, detected, tools.Paths);
+            var options = new RestoreOptions(connection, dialog.FileName, detected, SingleTransaction: detected != BackupFormat.Directory);
+            var plan = BackupOperationPlanFactory.CreateRestore("environment", connection.Host,
+                options, inspection, tools, null);
+            if (!_destructiveOperations.Confirm(new(DestructiveOperationKind.Restore,
+                "Confirm restore", connection.Database, RestoreConfirmation.Summary(plan),
+                "Create and verify a current backup before continuing."))) return;
+            var token = RestoreConfirmation.Create(plan);
+            UpdateCommandState();
+            var result = await _backupRestore.ExecuteRestoreAsync(plan, token, _backupController,
+                new Progress<ProcessOutputEntry>(AppendBackupOutput));
+            ShowBackupRestoreResult(result, "Restore");
+        }
+        catch (Exception ex)
+        {
+            MessagesText.Text = BackupSecretRedactor.Redact(ex.Message);
+            StatusText.Text = "Restore unavailable.";
+        }
+        finally { UpdateCommandState(); }
+    }
+
+    private void AppendBackupOutput(ProcessOutputEntry entry) =>
+        MessagesText.AppendText($"{entry.Timestamp:HH:mm:ss} {(entry.IsError ? "ERR" : "OUT")} {entry.Line}{Environment.NewLine}");
+
+    private void ShowBackupRestoreResult(BackupRestoreExecutionResult? result, string operation)
+    {
+        if (result is null) { StatusText.Text = $"{operation} result superseded."; return; }
+        StatusText.Text = $"{operation}: {result.State} ({result.CompletedAt - result.StartedAt:g})";
+        MessagesText.AppendText($"{Environment.NewLine}{result.Message}");
+        if (result.TargetMayBePartiallyModified)
+            MessagesText.AppendText($"{Environment.NewLine}WARNING: the target may contain partial changes.");
+        foreach (var warning in result.Warnings)
+            MessagesText.AppendText($"{Environment.NewLine}WARNING: {warning}");
+    }
     private async void SecurityRoles_Click(object sender, RoutedEventArgs e) { try { var cs = Environment.GetEnvironmentVariable("PMS_CONNECTION_STRING") ?? throw new InvalidOperationException("PMS_CONNECTION_STRING is not configured."); var roles = await new NpgsqlSecurityService().LoadRolesAsync(cs); MessagesText.Text = string.Join(Environment.NewLine, roles.Select(r => $"{r.Name} {(r.CanLogin ? "LOGIN" : "GROUP")} {(r.IsSuperuser ? "SUPERUSER" : "")}")); StatusText.Text = $"Loaded {roles.Count:N0} roles."; } catch (Exception ex) { MessagesText.Text = ex.Message; StatusText.Text = "Security metadata unavailable."; } }
     private async void ActivityMonitor_Click(object sender, RoutedEventArgs e) { try { var cs = Environment.GetEnvironmentVariable("PMS_CONNECTION_STRING") ?? throw new InvalidOperationException("PMS_CONNECTION_STRING is not configured."); var snapshot = await new NpgsqlActivityService().LoadSnapshotAsync(cs, DateTime.UtcNow.Ticks); ResultSummary.Text = $"Sessions {snapshot.Summary.TotalSessions:N0} · Active {snapshot.Summary.ActiveSessions:N0} · Idle {snapshot.Summary.IdleSessions:N0} · Blocked {snapshot.Summary.BlockedSessions:N0}"; MessagesText.Text = string.Join(Environment.NewLine, snapshot.Sessions.Select(s => $"{s.ProcessId} {s.ClassifiedState} {s.Database} {s.User} {s.Duration:g} {s.Query}")); StatusText.Text = $"Activity snapshot {snapshot.ServerTime:O}"; } catch (Exception ex) { MessagesText.Text = ex.Message; StatusText.Text = "Activity monitor unavailable."; } }
     private async void Maintenance_Click(object sender, RoutedEventArgs e) { try { var cs = Environment.GetEnvironmentVariable("PMS_CONNECTION_STRING") ?? throw new InvalidOperationException("PMS_CONNECTION_STRING is not configured."); var connection = DatabaseConnection.FromConnectionString(cs) with { Database = DatabaseText.Text }; var plan = new MaintenancePlan(MaintenanceOperation.Vacuum, new[] { new MaintenanceTarget(MaintenanceTargetKind.Database, connection.Database) }, new(Analyze: true, Verbose: true), new(18)); var sql = string.Join(Environment.NewLine, plan.Statements); if (!_destructiveOperations.Confirm(new(DestructiveOperationKind.Maintenance, "Maintenance confirmation", connection.Database, $"Run maintenance on a dedicated connection? This may take time and hold locks.{Environment.NewLine}{Environment.NewLine}{sql}", "Cancel before confirmation or wait for PostgreSQL to finish safely."))) return; MessagesText.Text = sql; var result = await new NpgsqlMaintenanceService().ExecuteAsync(cs, plan, new Progress<string>(x => MessagesText.AppendText(x + Environment.NewLine))); StatusText.Text = result.Status; } catch (Exception ex) { MessagesText.Text = ex.Message; StatusText.Text = "Maintenance unavailable."; } }

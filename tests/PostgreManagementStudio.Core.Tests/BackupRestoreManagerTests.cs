@@ -5,9 +5,19 @@ namespace PostgreManagementStudio.Core.Tests;
 public sealed class BackupRestoreManagerTests
 {
     [Fact]
-    public void SupportsTarAndRejectsUnsafeDestinations()
+    public void SupportsTarAndRequiresExplicitOverwrite()
     {
-        var request = BackupCommandBuilder.Build(new(new("localhost", 5432, "db", "user"), "archive.tar", BackupFormat.Tar), new("dump", "restore", "psql")); Assert.Contains("tar", request.Arguments); Assert.Throws<ArgumentException>(() => BackupSafetyValidator.ValidateDestination(Path.Combine(Path.GetTempPath(), "bad.backup"), BackupFormat.Custom));
+        var request = BackupCommandBuilder.Build(new(new("localhost", 5432, "db", "user"), "archive.tar", BackupFormat.Tar), new("dump", "restore", "psql"));
+        Assert.Contains("tar", request.Arguments);
+        var path = Path.GetTempFileName();
+        try
+        {
+            Assert.Throws<IOException>(() =>
+                BackupSafetyValidator.ValidateDestination(path, BackupFormat.Custom));
+            Assert.Equal(Path.GetFullPath(path),
+                BackupSafetyValidator.ValidateDestination(path, BackupFormat.Custom, true));
+        }
+        finally { File.Delete(path); }
     }
 
     [Fact]
@@ -19,6 +29,13 @@ public sealed class BackupRestoreManagerTests
     [Fact]
     public void VerifiesBackupOutputAndParsesToolVersions()
     {
-        var path = Path.GetTempFileName(); try { File.WriteAllText(path, "backup"); BackupSafetyValidator.VerifyOutput(path, BackupFormat.Custom); Assert.Equal(18, PostgreSqlToolVersionParser.Major("pg_restore (PostgreSQL) 18.4")); } finally { File.Delete(path); }
+        var path = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(path, "PGDMP"u8.ToArray());
+            BackupSafetyValidator.VerifyOutput(path, BackupFormat.Custom);
+            Assert.Equal(18, PostgreSqlToolVersionParser.Major("pg_restore (PostgreSQL) 18.4"));
+        }
+        finally { File.Delete(path); }
     }
 }

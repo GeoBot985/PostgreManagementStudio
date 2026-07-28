@@ -12,16 +12,29 @@ public partial class MainWindow : Window
     private readonly ObjectExplorerService _objectExplorer;
     private readonly ApplicationSettings _settings;
     private readonly DestructiveOperationGuard _destructiveOperations;
+    private readonly BackupRestoreOperationService _backupRestore;
+    private readonly PostgreSqlToolDiscoveryService _backupTools;
+    private readonly BackupInspectionService _backupInspection;
     private CancellationTokenSource? _metadataCancellation;
     private bool _activeShutdownApproved;
 
-    public MainWindow(QueryTabManager tabs, ObjectExplorerService objectExplorer, DestructiveOperationGuard destructiveOperations, ApplicationSettings settings)
+    public MainWindow(
+        QueryTabManager tabs,
+        ObjectExplorerService objectExplorer,
+        DestructiveOperationGuard destructiveOperations,
+        ApplicationSettings settings,
+        BackupRestoreOperationService backupRestore,
+        PostgreSqlToolDiscoveryService backupTools,
+        BackupInspectionService backupInspection)
     {
         InitializeComponent();
         _tabs = tabs;
         _objectExplorer = objectExplorer;
         _destructiveOperations = destructiveOperations;
         _settings = settings;
+        _backupRestore = backupRestore;
+        _backupTools = backupTools;
+        _backupInspection = backupInspection;
         AddTab();
     }
 
@@ -30,7 +43,8 @@ public partial class MainWindow : Window
         var doc = _tabs.Open(Environment.GetEnvironmentVariable("PMS_CONNECTION_STRING"), _settings.DefaultDatabase);
         doc.CommandTimeout = TimeSpan.FromSeconds(_settings.CommandTimeoutSeconds);
         doc.CancellationTimeout = TimeSpan.FromSeconds(_settings.CancellationTimeoutSeconds);
-        var view = new QueryTabView(doc, _destructiveOperations, _settings);
+        var view = new QueryTabView(doc, _destructiveOperations, _settings,
+            _backupRestore, _backupTools, _backupInspection);
         var tab = new TabItem { Header = doc.Title, Content = view, Tag = doc };
         view.DirtyChanged += (_, _) => tab.Header = doc.Title + (doc.IsDirty ? "*" : string.Empty);
         QueryTabs.Items.Add(tab);

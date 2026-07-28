@@ -31,6 +31,14 @@ public static class ProductionServices
         services.AddSingleton<IQueryExecutionTelemetry, DiagnosticQueryExecutionTelemetry>();
         services.AddSingleton<IUserConfirmationService, WpfUserConfirmationService>();
         services.AddSingleton<DestructiveOperationGuard>();
+        services.AddSingleton<IExternalProcessRunner, ExternalProcessRunner>();
+        services.AddSingleton<PostgreSqlToolLocator>();
+        services.AddSingleton<PostgreSqlToolDiscoveryService>();
+        services.AddSingleton<BackupInspectionService>();
+        services.AddSingleton<BackupOperationLockManager>();
+        services.AddSingleton<IBackupRestoreConnectionValidator, NpgsqlBackupRestoreConnectionValidator>();
+        services.AddSingleton<IBackupRestoreDiagnostics, DiagnosticBackupRestoreDiagnostics>();
+        services.AddSingleton<BackupRestoreOperationService>();
         services.AddSingleton(sp => new ResultExecutionService(
             sp.GetRequiredService<IQueryExecutor>(),
             new ResultStorageOptions(
