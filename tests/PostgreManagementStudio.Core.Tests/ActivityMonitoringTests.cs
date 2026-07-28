@@ -31,4 +31,12 @@ public sealed class ActivityMonitoringTests
     {
         var s = Session(1); var snapshot = new ActivitySnapshot(1, DateTimeOffset.UtcNow, new[] { s }, Array.Empty<BlockingRelationship>(), Array.Empty<BackendLock>(), new(1, 1, 0, 0, 0, 0, 0, 0, new Dictionary<string, int>(), null, DateTimeOffset.UtcNow)); var json = ActivityExportService.ToJson(snapshot, false, false, false); Assert.DoesNotContain("select 1", json); Assert.Contains("[redacted]", json);
     }
+
+    [Fact]
+    public void BlockingGraphHandlesCyclesAndDuplicateEdges()
+    { var graph = BlockingGraphService.Build(new[] { new BlockingRelationship(2, 1, 1, null, null, null, null, null), new BlockingRelationship(2, 1, 1, null, null, null, null, null), new BlockingRelationship(1, 2, 1, null, null, null, null, null) }); Assert.True(graph.HasCycles); Assert.NotEmpty(graph.Warnings); Assert.Equal(2, graph.Edges.Count); }
+
+    [Fact]
+    public void MetricsRatesRequireValidSampleIntervals()
+    { var rate = ActivityMetricsService.Rate(120, 10, 100, 5, TimeSpan.FromSeconds(5)); Assert.Equal(5, rate.TransactionsPerSecond); Assert.Equal(5d / 25d, rate.RollbackRatio); Assert.Equal(0, ActivityMetricsService.Rate(1, 1, 2, 2, TimeSpan.FromSeconds(5)).TransactionsPerSecond); }
 }

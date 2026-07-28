@@ -17,6 +17,33 @@ public sealed class BlockingAnalysisService
     private static BlockingTreeNode Build(int pid, IReadOnlyDictionary<int, BlockingRelationship[]> map, HashSet<int> path) { if (!path.Add(pid)) return new(pid, true, Array.Empty<BlockingTreeNode>()); var children = map.TryGetValue(pid, out var links) ? links.Select(x => Build(x.BlockedProcessId, map, new(path))).ToArray() : Array.Empty<BlockingTreeNode>(); return new(pid, false, children); }
 }
 public sealed record BlockingTreeNode(int ProcessId, bool CycleDetected, IReadOnlyList<BlockingTreeNode> Children);
+public sealed record BlockingGraph(IReadOnlyList<BlockingTreeNode> Roots, IReadOnlyList<BlockingRelationship> Edges, bool HasCycles, IReadOnlyList<string> Warnings);
+public static class SessionStateClassifier
+{
+    public static BackendState Classify(BackendSession session) => session.ClassifiedState;
+    public static bool IsLongRunning(BackendSession session, ActivityMonitorSettings settings) => session.Duration >= settings.EffectiveLongRunning || session.TransactionDuration >= settings.EffectiveIdleTransaction;
+}
+public static class BlockingGraphService
+{
+    public static BlockingGraph Build(IEnumerable<BlockingRelationship> relationships)
+    {
+        var edges = relationships.DistinctBy(x => (x.BlockedProcessId, x.BlockingProcessId)).OrderBy(x => x.BlockingProcessId).ThenBy(x => x.BlockedProcessId).ToArray();
+        var byBlocker = edges.GroupBy(x => x.BlockingProcessId).ToDictionary(x => x.Key, x => x.OrderBy(y => y.BlockedProcessId).ToArray());
+        var ids = edges.SelectMany(x => new[] { x.BlockedProcessId, x.BlockingProcessId }).ToHashSet();
+        var roots = ids.Except(edges.Select(x => x.BlockedProcessId)).OrderBy(x => x).Select(x => BuildNode(x, byBlocker, new HashSet<int>())).ToList();
+        var cycle = edges.Any(x => !roots.Any(r => Contains(r, x.BlockedProcessId)));
+        if (cycle) foreach (var id in ids.Where(x => !roots.Any(r => Contains(r, x)))) roots.Add(BuildNode(id, byBlocker, new HashSet<int>()));
+        return new(roots.OrderBy(x => x.ProcessId).ToArray(), edges, cycle, cycle ? new[] { "The blocking snapshot contains a cycle or inconsistent session relationships." } : Array.Empty<string>());
+    }
+    private static BlockingTreeNode BuildNode(int pid, IReadOnlyDictionary<int, BlockingRelationship[]> map, HashSet<int> path) { if (!path.Add(pid)) return new(pid, true, Array.Empty<BlockingTreeNode>()); var children = map.TryGetValue(pid, out var links) ? links.Select(x => BuildNode(x.BlockedProcessId, map, new(path))).ToArray() : Array.Empty<BlockingTreeNode>(); return new(pid, children.Any(x => x.CycleDetected), children); }
+    private static bool Contains(BlockingTreeNode node, int pid) => node.ProcessId == pid || node.Children.Any(x => Contains(x, pid));
+}
+public sealed record ActivityMetricRate(double TransactionsPerSecond, double RollbackRatio, TimeSpan SampleWindow);
+public static class ActivityMetricsService
+{
+    public static ActivityMetricRate Rate(long commits, long rollbacks, long previousCommits, long previousRollbacks, TimeSpan interval)
+    { if (interval <= TimeSpan.Zero || commits < previousCommits || rollbacks < previousRollbacks) return new(0, 0, interval); var total = commits - previousCommits + rollbacks - previousRollbacks; return new(total / interval.TotalSeconds, total == 0 ? 0 : (rollbacks - previousRollbacks) / (double)total, interval); }
+}
 public sealed class ActivityHistoryService(int maximumSnapshots = 60)
 {
     private readonly LinkedList<ActivitySnapshot> _snapshots = new(); public IReadOnlyList<ActivitySnapshot> Snapshots => _snapshots.ToArray();
