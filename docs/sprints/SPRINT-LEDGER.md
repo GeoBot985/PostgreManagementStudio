@@ -30,3 +30,4 @@
 | Sprint 026 | Query Plan Explorer and Performance Diagnostics | Complete with documented UI and integration limitations |
 | Sprint 027 | Execution Plan Comparison and Regression Detection | Complete with documented UI limitations |
 | Sprint 028 | Query Performance History and Local Baselines | Complete with documented storage and UI limitations |
+| Sprint 029 | Live Session Monitor and Query Activity Management | Complete with documented UI and storage limitations |
