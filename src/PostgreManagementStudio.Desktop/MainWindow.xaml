@@ -12,7 +12,9 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
@@ -56,6 +58,14 @@
             </ListView.View>
         </ListView>
 
-        <TextBlock x:Name="FooterText" Grid.Row="5" Margin="0,8,0,0" Opacity="0.7"/>
+        <StackPanel Grid.Row="5" Orientation="Horizontal" Margin="0,8,0,0">
+            <TextBlock Text="Selection r:" VerticalAlignment="Center"/><TextBox x:Name="StartRowText" Text="0" Width="45" Margin="4,0,4,0"/>
+            <TextBox x:Name="EndRowText" Text="0" Width="45" Margin="0,0,8,0"/>
+            <TextBlock Text="c:" VerticalAlignment="Center"/><TextBox x:Name="StartColumnText" Text="0" Width="35" Margin="4,0,4,0"/><TextBox x:Name="EndColumnText" Text="0" Width="35" Margin="0,0,8,0"/>
+            <ComboBox x:Name="FormatSelector" Width="140" SelectedIndex="0"><ComboBoxItem>PlainText</ComboBoxItem><ComboBoxItem>TabSeparatedValues</ComboBoxItem><ComboBoxItem>Csv</ComboBoxItem><ComboBoxItem>HtmlTable</ComboBoxItem></ComboBox>
+            <CheckBox x:Name="IncludeHeaders" Content="Headers" IsChecked="True" Margin="8,0" VerticalAlignment="Center"/><Button Content="Preview" Click="Preview_Click" Padding="10,4"/>
+        </StackPanel>
+        <TextBox x:Name="SerializationPreview" Grid.Row="6" Height="100" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True" VerticalScrollBarVisibility="Auto"/>
+        <TextBlock x:Name="FooterText" Grid.Row="7" Margin="0,8,0,0" Opacity="0.7"/>
     </Grid>
 </Window>

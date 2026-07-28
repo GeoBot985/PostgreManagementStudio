@@ -194,3 +194,7 @@ Awaiting independent review.
 Introduce disk-backed spill storage for results that exceed the in-memory
 limits, while keeping the `IResultSetStore` contract stable. Begin with a
 spooled backing store that pages hot rows from disk on demand.
+
+## Sprint 003 progress
+
+Sprint 003 is complete with documented low-severity issues. Added provider-independent result selection and formatting/serialization contracts in Core, invariant typed-value formatting, incremental PlainText/TSV/CSV/HTML serializers, temporary WPF preview integration, store-backed tests, live PostgreSQL mixed-value tests, and a 100,000-row performance test. All 116 tests pass. Boundary review found no Blocker or High findings. Low-severity limitations are that performance numbers are test-host observations and the WPF preview is intentionally disposable. Actual clipboard APIs and the production result grid remain deferred. Recommended Sprint 004 objective: introduce the clipboard service boundary and Windows clipboard serialization integration.

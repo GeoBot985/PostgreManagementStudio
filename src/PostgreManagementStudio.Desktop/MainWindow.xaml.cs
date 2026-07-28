@@ -1,4 +1,5 @@
 using System.Text;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using PostgreManagementStudio.Application;
@@ -95,6 +96,22 @@ public partial class MainWindow : Window
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e) => _executionCancellation?.Cancel();
+
+    private async void Preview_Click(object sender, RoutedEventArgs e)
+    {
+        if (ResultSetSelector.SelectedItem is not ResultSetOption option) { FooterText.Text = "Select a result set first."; return; }
+        if (!long.TryParse(StartRowText.Text, out var startRow) || !long.TryParse(EndRowText.Text, out var endRow) || !int.TryParse(StartColumnText.Text, out var startColumn) || !int.TryParse(EndColumnText.Text, out var endColumn)) { FooterText.Text = "Selection indexes must be numeric."; return; }
+        try
+        {
+            var selection = new ResultSelection(startRow, endRow, startColumn, endColumn);
+            var format = Enum.Parse<ResultSerializationFormat>(((ComboBoxItem)FormatSelector.SelectedItem).Content.ToString()!);
+            var serializer = new ResultSerializer(new DefaultResultValueFormatter(), format);
+            using var writer = new StringWriter(System.Globalization.CultureInfo.InvariantCulture);
+            var outcome = await serializer.SerializeAsync(option.Store, selection, new ResultSerializationOptions(format, IncludeHeaders.IsChecked == true, 100_000), writer);
+            SerializationPreview.Text = writer.ToString(); FooterText.Text = $"Serialized {outcome.RowsSerialized:N0} rows, {outcome.CharactersWritten:N0} characters ({outcome.StopReason?.ToString() ?? "complete"}).";
+        }
+        catch (Exception ex) { FooterText.Text = $"Serialization error: {ex.Message}"; }
+    }
 
     private async void ResultSetSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
