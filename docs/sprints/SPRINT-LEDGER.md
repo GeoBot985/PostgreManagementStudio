@@ -10,3 +10,4 @@
 | 006 | Complete with documented low-severity issues | Lightweight SQL lexer/completion engine, PostgreSQL metadata provider, isolated metadata cache, quoted-name handling, and Ctrl+Space editor completion |
 | 007 | Complete with documented low-severity issues | Multi-result DataGrid tabs, typed display formatting, row numbers, summaries, bounded virtualization, and clipboard copy actions |
 | 008 | Complete with documented low-severity issues | Streaming CSV/TSV/JSON/SQL export service, safe temporary-file replacement, progress/cancellation, formula protection, and grid export action |
+| 009 | Complete with documented low-severity issues | Provider-neutral typed result transformation, stable sorting, structured filtering, compound filters, regex-safe global search, cancellation, source immutability, and WPF exploration controls |
