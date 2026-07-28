@@ -12,3 +12,4 @@
 | 008 | Complete with documented low-severity issues | Streaming CSV/TSV/JSON/SQL export service, safe temporary-file replacement, progress/cancellation, formula protection, and grid export action |
 | 009 | Complete with documented low-severity issues | Provider-neutral typed result transformation, stable sorting, structured filtering, compound filters, regex-safe global search, cancellation, source immutability, and WPF exploration controls |
 | 010 | Complete with documented limitations | Structured PostgreSQL backup/restore commands, custom/plain/directory formats, tool discovery, secure process credentials, streamed cancellation, validation, and temporary WPF actions |
+| 011 | Complete with documented limitations | PostgreSQL role models, safe identifier quoting, role/membership/privilege/default-privilege SQL builders, metadata service, password safety, active-role protection, and temporary role browser |

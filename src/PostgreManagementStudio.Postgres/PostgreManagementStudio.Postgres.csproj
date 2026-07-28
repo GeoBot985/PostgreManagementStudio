@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\PostgreManagementStudio.Core\PostgreManagementStudio.Core.csproj" />
+    <ProjectReference Include="..\PostgreManagementStudio.Application\PostgreManagementStudio.Application.csproj" />
   </ItemGroup>
 
   <ItemGroup>
