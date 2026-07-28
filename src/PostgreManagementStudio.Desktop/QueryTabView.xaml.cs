@@ -10,14 +10,14 @@ namespace PostgreManagementStudio.Desktop;
 
 public partial class QueryTabView : UserControl
 {
-    private readonly QueryDocument _document; public event EventHandler? DirtyChanged;
+    private readonly QueryDocument _document; private IResultSession? _session; public event EventHandler? DirtyChanged;
     private readonly DocumentFileService _fileService = new(); private SqlDocument _file = new() { DisplayName = "Query" };
     public QueryTabView(QueryDocument document) { InitializeComponent(); _document = document; SqlText.Text = document.SqlText; DatabaseText.Text = document.Database; }
     private async void Execute_Click(object sender, RoutedEventArgs e) { await ExecuteAsync(); }
     private async Task ExecuteAsync()
     {
         _document.SqlText = SqlText.Text; _document.Database = DatabaseText.Text; var selected = SqlText.SelectionLength > 0 ? SqlText.SelectedText : null; ExecuteButton.IsEnabled = false; StatusText.Text = "Running…"; MessagesText.Clear();
-        try { var session = await _document.ExecuteAsync(selected); var output = new StringBuilder(_document.Message); ResultTabs.Items.Clear(); if (session is not null) { output.AppendLine(); foreach (var notice in session.Notices) output.AppendLine($"NOTICE [{notice.Severity}]: {notice.Message}"); for (var resultIndex = 0; resultIndex < session.ResultSets.Count; resultIndex++) { var store = session.ResultSets[resultIndex]; var rows = await store.GetRowsAsync(0, (int)Math.Min(store.LoadedRowCount, 10_000), CancellationToken.None); ResultTabs.Items.Add(CreateResultTab(store, rows)); if (store.LoadedRowCount > 10_000) output.AppendLine("Result display limited to 10,000 rows."); } if (session.ResultSets.Count > 0) ResultSummary.Text = string.Join(" | ", session.ResultSets.Select((s, i) => $"Results {i + 1}: {s.LoadedRowCount:N0} rows · {s.Schema.Columns.Count} columns")); } MessagesText.Text = output.ToString(); StatusText.Text = _document.State.ToString(); }
+        try { var session = await _document.ExecuteAsync(selected); _session = session; var output = new StringBuilder(_document.Message); ResultTabs.Items.Clear(); if (session is not null) { output.AppendLine(); foreach (var notice in session.Notices) output.AppendLine($"NOTICE [{notice.Severity}]: {notice.Message}"); for (var resultIndex = 0; resultIndex < session.ResultSets.Count; resultIndex++) { var store = session.ResultSets[resultIndex]; var rows = await store.GetRowsAsync(0, (int)Math.Min(store.LoadedRowCount, 10_000), CancellationToken.None); ResultTabs.Items.Add(CreateResultTab(store, rows)); if (store.LoadedRowCount > 10_000) output.AppendLine("Result display limited to 10,000 rows."); } if (session.ResultSets.Count > 0) ResultSummary.Text = string.Join(" | ", session.ResultSets.Select((s, i) => $"Results {i + 1}: {s.LoadedRowCount:N0} rows · {s.Schema.Columns.Count} columns")); } MessagesText.Text = output.ToString(); StatusText.Text = _document.State.ToString(); }
         catch (Exception ex) { StatusText.Text = "Error"; MessagesText.Text = ex.Message; } finally { ExecuteButton.IsEnabled = true; DirtyChanged?.Invoke(this, EventArgs.Empty); }
     }
     private void Cancel_Click(object sender, RoutedEventArgs e) => _document.Cancel();
@@ -30,6 +30,11 @@ public partial class QueryTabView : UserControl
     }
     private void Copy_Click(object sender, RoutedEventArgs e) => CopyGrid(false);
     private void CopyWithHeaders_Click(object sender, RoutedEventArgs e) => CopyGrid(true);
+    private async void Export_Click(object sender, RoutedEventArgs e)
+    {
+        if (_session is null || ResultTabs.SelectedIndex < 0 || ResultTabs.SelectedIndex >= _session.ResultSets.Count) return;
+        var dialog = new SaveFileDialog { Filter = "CSV (*.csv)|*.csv|TSV (*.tsv)|*.tsv|JSON (*.json)|*.json|SQL inserts (*.sql)|*.sql", DefaultExt = ".csv", AddExtension = true, FileName = "query-results" }; if (dialog.ShowDialog() != true) return; var format = dialog.FilterIndex switch { 2 => ResultExportFormat.Tsv, 3 => ResultExportFormat.Json, 4 => ResultExportFormat.SqlInsert, _ => ResultExportFormat.Csv }; try { var outcome = await new ResultExportService().ExportAsync(new ResultExportRequest(_session.ResultSets[ResultTabs.SelectedIndex], null, format, ResultExportScope.EntireResult, dialog.FileName, new()), new Progress<ResultExportProgress>(p => StatusText.Text = $"{p.Phase}: {p.RowsWritten:N0}")); StatusText.Text = outcome.Completed ? $"Exported {outcome.RowsWritten:N0} rows to {outcome.Path}" : "Export cancelled."; } catch (Exception ex) { MessagesText.Text = $"Export failed: {ex.Message}"; }
+    }
     private void CopyGrid(bool headers) { if (ResultTabs.SelectedItem is not TabItem tab || tab.Tag is not DataGrid grid) return; var lines = new List<string>(); if (headers) lines.Add(string.Join("\t", grid.Columns.Skip(1).Select(c => c.Header?.ToString()?.Split('\n')[0]))); foreach (var item in grid.SelectedItems.Cast<GridRow>()) lines.Add(string.Join("\t", item.Values)); if (lines.Count > 0) Clipboard.SetText(string.Join(Environment.NewLine, lines)); }
     private async void Open_Click(object sender, RoutedEventArgs e) { var dialog = new OpenFileDialog { Filter = "SQL files (*.sql)|*.sql|All files (*.*)|*.*", Multiselect = false }; if (dialog.ShowDialog() != true) return; try { var loaded = await _fileService.LoadAsync(dialog.FileName); _file = SqlDocument.FromLoaded(loaded); SqlText.Text = _file.Text; StatusText.Text = $"Opened {dialog.FileName}"; } catch (Exception ex) { MessagesText.Text = ex.Message; } }
     private async void Save_Click(object sender, RoutedEventArgs e) { if (_file.FilePath is null) { await SaveAsAsync(); return; } await SaveToAsync(_file.FilePath); }

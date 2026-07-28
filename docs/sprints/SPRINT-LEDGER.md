@@ -9,3 +9,4 @@
 | 005 | Complete with documented low-severity issues | SQL document/file services, safe saves, encoding detection, recent files, find/replace, recovery snapshots, and temporary editor commands |
 | 006 | Complete with documented low-severity issues | Lightweight SQL lexer/completion engine, PostgreSQL metadata provider, isolated metadata cache, quoted-name handling, and Ctrl+Space editor completion |
 | 007 | Complete with documented low-severity issues | Multi-result DataGrid tabs, typed display formatting, row numbers, summaries, bounded virtualization, and clipboard copy actions |
+| 008 | Complete with documented low-severity issues | Streaming CSV/TSV/JSON/SQL export service, safe temporary-file replacement, progress/cancellation, formula protection, and grid export action |
