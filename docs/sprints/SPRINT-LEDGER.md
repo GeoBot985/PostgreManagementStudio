@@ -39,3 +39,4 @@
 | Sprint 035 | End-to-End Integration and Regression Baseline | Complete baseline with explicit P0/P1 release blockers |
 | Sprint 036 | SQL Editor Reliability and Execution Hardening | Complete with lifecycle, context, cancellation, transaction, and failure regression coverage |
 | Sprint 037 | Connection Management and Session Hardening | Complete with central configuration, lifecycle, credential, pooling, session-isolation, and live failure coverage |
+| Sprint 038 | Object Browser and Metadata Hardening | Complete with lazy OID-based loading, stale-safe refresh, bounded caches, permissions, and live catalog coverage |

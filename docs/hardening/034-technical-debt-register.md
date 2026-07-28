@@ -74,3 +74,14 @@ New evidence-based blockers:
   plaintext.
 - Physical server restart, certificate rotation, and GSS/LDAP/SSPI validation
   remain deployment compatibility campaigns, not code-release blockers.
+
+## Sprint 38 updates
+
+- `TD-034-002` is further reduced: the reachable Object Explorer now loads
+  lazily through a production OID-based provider with refresh reconciliation,
+  permissions, cancellation, cache isolation, and live PostgreSQL coverage.
+  Saved-connection management remains separate from metadata navigation.
+- The old unbounded completion metadata cache is replaced by a bounded,
+  expiring, failure-evicting, credential-identity-aware cache.
+- Property and dependency panels remain unreachable prototype scope; Sprint 38
+  provides their shared identity/lifecycle primitives without adding features.

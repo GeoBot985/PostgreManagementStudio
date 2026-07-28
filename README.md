@@ -42,6 +42,11 @@ reconnect rules are documented in
 `docs/hardening/037-connection-contract.md`. Sprint 37 evidence is recorded in
 `docs/hardening/037-completion-report.md`.
 
+Object Browser identity, lazy metadata loading, refresh, filtering, cache,
+permission, and diagnostics rules are documented in
+`docs/hardening/038-metadata-contract.md`. Sprint 38 evidence is recorded in
+`docs/hardening/038-completion-report.md`.
+
 To run the gated perf suite:
 
 ```powershell

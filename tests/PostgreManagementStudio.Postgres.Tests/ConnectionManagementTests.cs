@@ -181,6 +181,9 @@ public sealed class ConnectionManagementTests
             new PostgresException("bad", "ERROR", "ERROR", "28P01")));
         Assert.Equal(ConnectionFailureCategory.DatabaseUnavailable, ConnectionFailureClassifier.Classify(
             new PostgresException("bad", "FATAL", "FATAL", "3D000")));
+        Assert.Equal(ConnectionFailureCategory.DatabaseUnavailable, ConnectionFailureClassifier.Classify(
+            new NpgsqlException("wrapped provider failure",
+                new PostgresException("bad", "FATAL", "FATAL", "3D000"))));
         Assert.Equal(ConnectionFailureCategory.PoolExhausted, ConnectionFailureClassifier.Classify(
             new NpgsqlException("The connection pool has been exhausted")));
         Assert.Equal(ConnectionFailureCategory.Ssl, ConnectionFailureClassifier.Classify(

@@ -1,18 +1,415 @@
+using System.Security.Cryptography;
+using System.Text;
 using Npgsql;
+using PostgreManagementStudio.Application;
 using PostgreManagementStudio.Core;
 
 namespace PostgreManagementStudio.Postgres;
 
-public sealed class NpgsqlMetadataProvider(INpgsqlConnectionFactory? connectionFactory = null) : IPostgresMetadataProvider
+public sealed class NpgsqlMetadataProvider(INpgsqlConnectionFactory? connectionFactory = null)
+    : IPostgresMetadataProvider, IPostgresObjectMetadataProvider
 {
     private readonly INpgsqlConnectionFactory _connections = connectionFactory ?? NpgsqlConnectionFactory.Shared;
 
-    public async Task<DatabaseMetadataSnapshot> LoadAsync(string connectionString, string database, CancellationToken cancellationToken = default)
+    public async Task<ObjectMetadataRoot> LoadRootAsync(
+        ObjectMetadataContext context,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenAsync(context, cancellationToken).ConfigureAwait(false);
+        uint databaseOid;
+        string serverVersion;
+        string serverFingerprint;
+        await using (var identity = new NpgsqlCommand("""
+            SELECT d.oid::bigint, current_setting('server_version_num'),
+                   COALESCE(inet_server_addr()::text, 'local') || ':' ||
+                   COALESCE(inet_server_port()::text, current_setting('port')) || ':' ||
+                   current_setting('server_version_num')
+            FROM pg_database d
+            WHERE d.datname = current_database()
+            """, connection))
+        await using (var reader = await identity.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                throw new MetadataObjectNotFoundException("The selected database no longer exists.");
+            databaseOid = checked((uint)reader.GetInt64(0));
+            serverVersion = reader.GetString(1);
+            serverFingerprint = Hash(reader.GetString(2));
+        }
+
+        var databaseIdentity = Identity(context, serverFingerprint, databaseOid, databaseOid,
+            PostgresObjectClass.Database, context.Database);
+        var schemas = new List<ObjectMetadataDescriptor>();
+        await using (var command = new NpgsqlCommand("""
+            SELECT n.oid::bigint, n.nspname,
+                   EXISTS (
+                       SELECT 1 FROM pg_depend d
+                       WHERE d.classid = 'pg_namespace'::regclass
+                         AND d.objid = n.oid
+                         AND d.deptype = 'e')
+            FROM pg_namespace n
+            WHERE has_schema_privilege(n.oid, 'USAGE')
+               OR pg_has_role(n.nspowner, 'USAGE')
+            ORDER BY n.nspname COLLATE "C", n.oid
+            """, connection))
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                var oid = checked((uint)reader.GetInt64(0));
+                var name = reader.GetString(1);
+                var classification = reader.GetBoolean(2)
+                    ? MetadataSystemClassification.ExtensionOwned
+                    : ObjectMetadataRules.ClassifySchema(name);
+                schemas.Add(new(
+                    Identity(context, serverFingerprint, databaseOid, oid, PostgresObjectClass.Schema, name,
+                        schemaOid: oid, parentOid: databaseOid),
+                    name, name, name, PostgreSqlIdentifierQuoter.Quote(name), classification, true));
+            }
+        }
+
+        return new(databaseIdentity, connection.Database, serverVersion,
+            ObjectMetadataRules.Filter(schemas, context.ShowSystemObjects), DateTimeOffset.UtcNow);
+    }
+
+    public async Task<ObjectMetadataBatch> LoadChildrenAsync(
+        ObjectMetadataContext context,
+        PostgresObjectIdentity parent,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateContext(context, parent);
+        await using var connection = await OpenAsync(context, cancellationToken).ConfigureAwait(false);
+        return parent.ObjectClass switch
+        {
+            PostgresObjectClass.Schema => await LoadSchemaChildrenAsync(connection, context, parent, cancellationToken).ConfigureAwait(false),
+            PostgresObjectClass.Table or PostgresObjectClass.PartitionedTable or PostgresObjectClass.Partition
+                or PostgresObjectClass.View or PostgresObjectClass.MaterializedView or PostgresObjectClass.ForeignTable =>
+                await LoadColumnsAsync(connection, context, parent, cancellationToken).ConfigureAwait(false),
+            _ => new(parent, Array.Empty<ObjectMetadataDescriptor>(), DateTimeOffset.UtcNow),
+        };
+    }
+
+    public async Task<DatabaseMetadataSnapshot> LoadAsync(
+        string connectionString,
+        string database,
+        CancellationToken cancellationToken = default)
     {
         var builder = new NpgsqlConnectionStringBuilder(connectionString) { Database = database };
-        await using var connection = _connections.Create(builder.ConnectionString, "PostgreManagementStudio - Metadata"); await connection.OpenAsync(cancellationToken); var schemas = await ReadStrings(connection, "SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname <> 'information_schema' ORDER BY nspname", cancellationToken); var relations = new List<RelationMetadata>(); await using (var command = new NpgsqlCommand("SELECT n.nspname, c.relname, c.relkind FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind IN ('r','p','v','m','S') AND n.nspname NOT LIKE 'pg_%' ORDER BY n.nspname,c.relname", connection)) await using (var reader = await command.ExecuteReaderAsync(cancellationToken)) { while (await reader.ReadAsync(cancellationToken)) relations.Add(new(reader.GetString(0), reader.GetString(1), reader.GetChar(2) switch { 'v' => CompletionKind.View, 'm' => CompletionKind.MaterializedView, 'S' => CompletionKind.Sequence, _ => CompletionKind.Table }, Array.Empty<ColumnMetadata>())); }
-        var routines = new List<RoutineMetadata>(); await using (var command = new NpgsqlCommand("SELECT n.nspname, p.proname, pg_get_function_result(p.oid), pg_get_function_identity_arguments(p.oid), CASE WHEN p.prokind='p' THEN 'procedure' ELSE 'function' END FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname NOT LIKE 'pg_%' ORDER BY n.nspname,p.proname", connection)) await using (var reader = await command.ExecuteReaderAsync(cancellationToken)) { while (await reader.ReadAsync(cancellationToken)) { var kind = reader.GetString(4) == "procedure" ? CompletionKind.Procedure : CompletionKind.Function; routines.Add(new(reader.GetString(0), reader.GetString(1), reader.IsDBNull(2) ? string.Empty : reader.GetString(2), reader.GetString(3), kind)); } }
-        var columns = new List<(string schema, string relation, ColumnMetadata column)>(); await using (var command = new NpgsqlCommand("SELECT n.nspname,c.relname,a.attname,format_type(a.atttypid,a.atttypmod),a.attnum,(NOT a.attnotnull) FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE a.attnum>0 AND NOT a.attisdropped AND c.relkind IN ('r','p','v','m') ORDER BY n.nspname,c.relname,a.attnum", connection)) await using (var reader = await command.ExecuteReaderAsync(cancellationToken)) while (await reader.ReadAsync(cancellationToken)) columns.Add((reader.GetString(0), reader.GetString(1), new(reader.GetString(2), reader.GetString(3), reader.GetInt16(4), reader.GetBoolean(5)))); relations = relations.Select(r => r with { Columns = columns.Where(c => c.schema == r.SchemaName && c.relation == r.Name).Select(c => c.column).ToArray() }).ToList(); var types = await ReadStrings(connection, "SELECT t.typname FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema' AND t.typtype IN ('b','c','d','e','r') ORDER BY t.typname", cancellationToken); return new(builder.ConnectionString.GetHashCode().ToString(), connection.Database, schemas, relations, routines, types, relations.Where(r => r.Kind == CompletionKind.Sequence).Select(r => r.Name).ToArray(), DateTimeOffset.UtcNow);
+        await using var connection = _connections.Create(builder.ConnectionString, "PostgreManagementStudio - Completion Metadata");
+        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+        var schemas = await ReadStringsAsync(connection, """
+            SELECT n.nspname
+            FROM pg_namespace n
+            WHERE n.nspname NOT LIKE 'pg_%'
+              AND n.nspname <> 'information_schema'
+              AND (has_schema_privilege(n.oid, 'USAGE') OR pg_has_role(n.nspowner, 'USAGE'))
+            ORDER BY n.nspname COLLATE "C"
+            """, cancellationToken).ConfigureAwait(false);
+
+        var relations = new List<RelationMetadata>();
+        await using (var command = new NpgsqlCommand("""
+            SELECT n.nspname, c.relname, c.relkind
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE c.relkind IN ('r','p','v','m','S','f')
+              AND n.nspname NOT LIKE 'pg_%'
+              AND n.nspname <> 'information_schema'
+              AND (has_table_privilege(c.oid, 'SELECT')
+                   OR has_any_column_privilege(c.oid, 'SELECT')
+                   OR pg_has_role(c.relowner, 'USAGE'))
+            ORDER BY n.nspname COLLATE "C", c.relname COLLATE "C", c.oid
+            """, connection))
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                var kind = reader.GetChar(2) switch
+                {
+                    'v' => CompletionKind.View,
+                    'm' => CompletionKind.MaterializedView,
+                    'S' => CompletionKind.Sequence,
+                    _ => CompletionKind.Table,
+                };
+                relations.Add(new(reader.GetString(0), reader.GetString(1), kind, Array.Empty<ColumnMetadata>()));
+            }
+        }
+
+        var routines = new List<RoutineMetadata>();
+        await using (var command = new NpgsqlCommand("""
+            SELECT n.nspname, p.proname, pg_get_function_result(p.oid),
+                   pg_get_function_identity_arguments(p.oid), p.prokind
+            FROM pg_proc p
+            JOIN pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname NOT LIKE 'pg_%'
+              AND n.nspname <> 'information_schema'
+              AND (has_schema_privilege(n.oid, 'USAGE') OR pg_has_role(n.nspowner, 'USAGE'))
+            ORDER BY n.nspname COLLATE "C", p.proname COLLATE "C",
+                     pg_get_function_identity_arguments(p.oid) COLLATE "C", p.oid
+            """, connection))
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                var kind = reader.GetChar(4) == 'p' ? CompletionKind.Procedure : CompletionKind.Function;
+                routines.Add(new(reader.GetString(0), reader.GetString(1),
+                    reader.IsDBNull(2) ? "" : reader.GetString(2), reader.GetString(3), kind));
+            }
+        }
+
+        var columns = new List<(string Schema, string Relation, ColumnMetadata Column)>();
+        await using (var command = new NpgsqlCommand("""
+            SELECT n.nspname, c.relname, a.attname,
+                   format_type(a.atttypid, a.atttypmod), a.attnum, NOT a.attnotnull
+            FROM pg_attribute a
+            JOIN pg_class c ON c.oid = a.attrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE a.attnum > 0 AND NOT a.attisdropped
+              AND c.relkind IN ('r','p','v','m','f')
+              AND n.nspname NOT LIKE 'pg_%'
+              AND n.nspname <> 'information_schema'
+              AND (has_table_privilege(c.oid, 'SELECT')
+                   OR has_any_column_privilege(c.oid, 'SELECT')
+                   OR pg_has_role(c.relowner, 'USAGE'))
+            ORDER BY n.nspname COLLATE "C", c.relname COLLATE "C", a.attnum
+            """, connection))
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                columns.Add((reader.GetString(0), reader.GetString(1),
+                    new(reader.GetString(2), reader.GetString(3), reader.GetInt16(4), reader.GetBoolean(5))));
+        relations = relations.Select(relation => relation with
+        {
+            Columns = Array.AsReadOnly(columns
+                .Where(x => x.Schema == relation.SchemaName && x.Relation == relation.Name)
+                .Select(x => x.Column).ToArray()),
+        }).ToList();
+        var types = await ReadStringsAsync(connection, """
+            SELECT t.typname
+            FROM pg_type t
+            JOIN pg_namespace n ON n.oid=t.typnamespace
+            WHERE n.nspname NOT LIKE 'pg_%'
+              AND n.nspname <> 'information_schema'
+              AND t.typtype IN ('b','c','d','e','r','m')
+              AND (has_schema_privilege(n.oid, 'USAGE') OR pg_has_role(n.nspowner, 'USAGE'))
+            ORDER BY t.typname COLLATE "C"
+            """, cancellationToken).ConfigureAwait(false);
+        return new(Hash(builder.ConnectionString), database, schemas, relations, routines, types,
+            relations.Where(x => x.Kind == CompletionKind.Sequence).Select(x => x.Name).ToArray(), DateTimeOffset.UtcNow);
     }
-    private static async Task<IReadOnlyList<string>> ReadStrings(NpgsqlConnection connection, string sql, CancellationToken token) { var result = new List<string>(); await using var command = new NpgsqlCommand(sql, connection); await using var reader = await command.ExecuteReaderAsync(token); while (await reader.ReadAsync(token)) result.Add(reader.GetString(0)); return result; }
+
+    private async Task<ObjectMetadataBatch> LoadSchemaChildrenAsync(
+        NpgsqlConnection connection,
+        ObjectMetadataContext context,
+        PostgresObjectIdentity parent,
+        CancellationToken cancellationToken)
+    {
+        var objects = new List<ObjectMetadataDescriptor>();
+        await using (var command = new NpgsqlCommand("""
+            SELECT c.oid::bigint, c.relname, c.relkind, c.relispartition,
+                   e.oid::bigint
+            FROM pg_class c
+            LEFT JOIN pg_depend d
+              ON d.classid = 'pg_class'::regclass
+             AND d.objid = c.oid AND d.deptype = 'e'
+            LEFT JOIN pg_extension e ON e.oid = d.refobjid
+            WHERE c.relnamespace = @schema_oid
+              AND c.relkind IN ('r','p','v','m','S','f')
+              AND (has_table_privilege(c.oid, 'SELECT')
+                   OR has_any_column_privilege(c.oid, 'SELECT')
+                   OR pg_has_role(c.relowner, 'USAGE'))
+            ORDER BY c.relname COLLATE "C", c.oid
+            """, connection))
+        {
+            command.Parameters.AddWithValue("schema_oid", (long)parent.ObjectOid);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                var oid = checked((uint)reader.GetInt64(0));
+                var name = reader.GetString(1);
+                var relationKind = reader.GetChar(2);
+                var isPartition = reader.GetBoolean(3);
+                var objectClass = relationKind switch
+                {
+                    'p' => PostgresObjectClass.PartitionedTable,
+                    'v' => PostgresObjectClass.View,
+                    'm' => PostgresObjectClass.MaterializedView,
+                    'S' => PostgresObjectClass.Sequence,
+                    'f' => PostgresObjectClass.ForeignTable,
+                    _ when isPartition => PostgresObjectClass.Partition,
+                    _ => PostgresObjectClass.Table,
+                };
+                var extensionOid = reader.IsDBNull(4) ? null : checked((uint?)reader.GetInt64(4));
+                var classification = extensionOid.HasValue
+                    ? MetadataSystemClassification.ExtensionOwned
+                    : ObjectMetadataRules.ClassifySchema(parent.NameSnapshot);
+                objects.Add(new(
+                    Identity(context, parent.ServerFingerprint, parent.DatabaseOid, oid, objectClass, name,
+                        parent.ObjectOid, parent.ObjectOid),
+                    name, parent.NameSnapshot, name,
+                    PostgreSqlIdentifierQuoter.Qualified(parent.NameSnapshot, name),
+                    classification, objectClass is not PostgresObjectClass.Sequence,
+                    ExtensionOid: extensionOid));
+            }
+        }
+
+        await using (var command = new NpgsqlCommand("""
+            SELECT p.oid::bigint, p.proname, p.prokind,
+                   pg_get_function_identity_arguments(p.oid),
+                   e.oid::bigint
+            FROM pg_proc p
+            LEFT JOIN pg_depend d
+              ON d.classid = 'pg_proc'::regclass
+             AND d.objid = p.oid AND d.deptype = 'e'
+            LEFT JOIN pg_extension e ON e.oid = d.refobjid
+            WHERE p.pronamespace = @schema_oid
+            ORDER BY p.proname COLLATE "C",
+                     pg_get_function_identity_arguments(p.oid) COLLATE "C", p.oid
+            """, connection))
+        {
+            command.Parameters.AddWithValue("schema_oid", (long)parent.ObjectOid);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                var oid = checked((uint)reader.GetInt64(0));
+                var name = reader.GetString(1);
+                var objectClass = reader.GetChar(2) switch
+                {
+                    'p' => PostgresObjectClass.Procedure,
+                    'a' => PostgresObjectClass.Aggregate,
+                    'w' => PostgresObjectClass.WindowFunction,
+                    _ => PostgresObjectClass.Function,
+                };
+                var signature = reader.GetString(3);
+                var extensionOid = reader.IsDBNull(4) ? null : checked((uint?)reader.GetInt64(4));
+                var classification = extensionOid.HasValue
+                    ? MetadataSystemClassification.ExtensionOwned
+                    : ObjectMetadataRules.ClassifySchema(parent.NameSnapshot);
+                var quoted = PostgreSqlIdentifierQuoter.Qualified(parent.NameSnapshot, name);
+                objects.Add(new(
+                    Identity(context, parent.ServerFingerprint, parent.DatabaseOid, oid, objectClass, name,
+                        parent.ObjectOid, parent.ObjectOid),
+                    name, parent.NameSnapshot, $"{name}({signature})", $"{quoted}({signature})",
+                    classification, false, signature, extensionOid));
+            }
+        }
+
+        if (objects.Count == 0 && !await ExistsAsync(connection, "pg_namespace", parent.ObjectOid, cancellationToken).ConfigureAwait(false))
+            throw new MetadataObjectNotFoundException("The schema changed while metadata was loading.");
+        return new(parent, ObjectMetadataRules.Filter(objects, context.ShowSystemObjects), DateTimeOffset.UtcNow);
+    }
+
+    private static async Task<ObjectMetadataBatch> LoadColumnsAsync(
+        NpgsqlConnection connection,
+        ObjectMetadataContext context,
+        PostgresObjectIdentity parent,
+        CancellationToken cancellationToken)
+    {
+        var columns = new List<ObjectMetadataDescriptor>();
+        await using var command = new NpgsqlCommand("""
+            SELECT a.attname, format_type(a.atttypid, a.atttypmod),
+                   a.attnum, NOT a.attnotnull
+            FROM pg_attribute a
+            WHERE a.attrelid = @relation_oid
+              AND a.attnum > 0
+              AND NOT a.attisdropped
+            ORDER BY a.attnum
+            """, connection);
+        command.Parameters.AddWithValue("relation_oid", (long)parent.ObjectOid);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var name = reader.GetString(0);
+            var dataType = reader.GetString(1);
+            var ordinal = reader.GetInt16(2);
+            var nullable = reader.GetBoolean(3);
+            columns.Add(new(
+                Identity(context, parent.ServerFingerprint, parent.DatabaseOid, parent.ObjectOid,
+                    PostgresObjectClass.Column, name, parent.ObjectOid, parent.SchemaOid, ordinal),
+                name, parent.NameSnapshot, name,
+                parent.NameSnapshot + "." + PostgreSqlIdentifierQuoter.Quote(name),
+                MetadataSystemClassification.User, false, dataType, Ordinal: ordinal,
+                ExtensionOid: null));
+            if (nullable)
+                columns[^1] = columns[^1] with { DisplayName = $"{name} — {dataType} nullable" };
+            else
+                columns[^1] = columns[^1] with { DisplayName = $"{name} — {dataType}" };
+        }
+        if (columns.Count == 0 && !await ExistsAsync(connection, "pg_class", parent.ObjectOid, cancellationToken).ConfigureAwait(false))
+            throw new MetadataObjectNotFoundException("The relation changed while metadata was loading.");
+        return new(parent, ObjectMetadataRules.Sort(columns), DateTimeOffset.UtcNow);
+    }
+
+    private async Task<NpgsqlConnection> OpenAsync(ObjectMetadataContext context, CancellationToken cancellationToken)
+    {
+        var builder = new NpgsqlConnectionStringBuilder(context.ConnectionString) { Database = context.Database };
+        var connection = _connections.Create(builder.ConnectionString, "PostgreManagementStudio - Metadata");
+        try
+        {
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            return connection;
+        }
+        catch
+        {
+            await connection.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private static async Task<bool> ExistsAsync(
+        NpgsqlConnection connection,
+        string catalogue,
+        uint oid,
+        CancellationToken cancellationToken)
+    {
+        var sql = catalogue == "pg_namespace"
+            ? "SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE oid=@oid)"
+            : "SELECT EXISTS (SELECT 1 FROM pg_class WHERE oid=@oid)";
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("oid", (long)oid);
+        return (bool)(await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false))!;
+    }
+
+    private static async Task<IReadOnlyList<string>> ReadStringsAsync(
+        NpgsqlConnection connection,
+        string sql,
+        CancellationToken cancellationToken)
+    {
+        var values = new List<string>();
+        await using var command = new NpgsqlCommand(sql, connection);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            values.Add(reader.GetString(0));
+        return Array.AsReadOnly(values.ToArray());
+    }
+
+    private static PostgresObjectIdentity Identity(
+        ObjectMetadataContext context,
+        string serverFingerprint,
+        uint databaseOid,
+        uint objectOid,
+        PostgresObjectClass objectClass,
+        string name,
+        uint? parentOid = null,
+        uint? schemaOid = null,
+        int? subObject = null) => new()
+    {
+        ConnectionProfileId = context.ConnectionProfileId,
+        ConfigurationIdentity = context.ConfigurationIdentity,
+        ServerFingerprint = serverFingerprint,
+        DatabaseOid = databaseOid,
+        ObjectOid = objectOid,
+        ObjectClass = objectClass,
+        ParentOid = parentOid,
+        SchemaOid = schemaOid,
+        SubObjectNumber = subObject,
+        NameSnapshot = name,
+    };
+
+    private static void ValidateContext(ObjectMetadataContext context, PostgresObjectIdentity parent)
+    {
+        if (context.ConnectionProfileId != parent.ConnectionProfileId
+            || context.ConfigurationIdentity != parent.ConfigurationIdentity)
+            throw new InvalidOperationException("Metadata identity does not belong to the active connection profile.");
+    }
+
+    private static string Hash(string value) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
 }

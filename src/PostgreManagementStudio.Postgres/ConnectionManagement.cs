@@ -256,6 +256,8 @@ public static class ConnectionFailureClassifier
                 "57P01" or "57P02" or "57P03" => ConnectionFailureCategory.ServerUnavailable,
                 _ => ConnectionFailureCategory.Unknown,
             };
+        if (exception.InnerException is PostgresException nestedPostgres)
+            return Classify(nestedPostgres);
         if (exception is SocketException socket)
             return socket.SocketErrorCode is SocketError.HostNotFound or SocketError.NoData ? ConnectionFailureCategory.Dns : ConnectionFailureCategory.Network;
         if (exception.InnerException is SocketException innerSocket)

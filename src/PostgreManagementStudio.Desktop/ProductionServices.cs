@@ -20,7 +20,12 @@ public static class ProductionServices
         services.AddSingleton<ConnectionProfileRegistry>();
         services.AddSingleton<IQueryExecutor>(sp => new NpgsqlQueryExecutor(sp.GetRequiredService<INpgsqlConnectionFactory>()));
         services.AddSingleton<IPostgresVersionQuery>(sp => new NpgsqlPostgresVersionQuery(sp.GetRequiredService<INpgsqlConnectionFactory>()));
-        services.AddSingleton<IPostgresMetadataProvider>(sp => new NpgsqlMetadataProvider(sp.GetRequiredService<INpgsqlConnectionFactory>()));
+        services.AddSingleton<NpgsqlMetadataProvider>(sp => new(sp.GetRequiredService<INpgsqlConnectionFactory>()));
+        services.AddSingleton<IPostgresMetadataProvider>(sp => sp.GetRequiredService<NpgsqlMetadataProvider>());
+        services.AddSingleton<IPostgresObjectMetadataProvider>(sp => sp.GetRequiredService<NpgsqlMetadataProvider>());
+        services.AddSingleton<IMetadataDiagnostics, DiagnosticMetadataDiagnostics>();
+        services.AddSingleton<BoundedMetadataCache>();
+        services.AddSingleton<HardenedMetadataService>();
         services.AddSingleton<IApplicationSettingsStore>(new JsonApplicationSettingsStore(settingsPath));
         services.AddSingleton(settings);
         services.AddSingleton<IQueryExecutionTelemetry, DiagnosticQueryExecutionTelemetry>();
@@ -34,7 +39,8 @@ public static class ProductionServices
                 maximumRowsPerResultSet: settings.DisplayedRowLimit)));
         services.AddSingleton<QueryTabManager>();
         services.AddTransient<PostgresVersionService>();
-        services.AddTransient<ObjectExplorerService>();
+        services.AddTransient<ObjectExplorerService>(sp =>
+            new(sp.GetRequiredService<HardenedMetadataService>()));
         services.AddTransient<DocumentFileService>();
         services.AddTransient<FindReplaceService>();
         services.AddTransient<ResultExportService>();

@@ -43,8 +43,8 @@ public sealed class HardeningRegressionIntegrationTests
         Assert.Contains(schema.Children.SelectMany(x => x.Children), x => x.Name == "Type Matrix");
         Assert.Contains(schema.Children.SelectMany(x => x.Children), x => x.Name == "Order");
         Assert.Contains(schema.Children.SelectMany(x => x.Children), x => x.Name == "Materialized Résumé");
-        Assert.Contains(schema.Children.SelectMany(x => x.Children), x => x.Name == "Function With Space");
-        Assert.Contains(schema.Children.SelectMany(x => x.Children), x => x.Name == "Procedure With Space");
+        Assert.Contains(schema.Children.SelectMany(x => x.Children), x => x.Name.StartsWith("Function With Space(", StringComparison.Ordinal));
+        Assert.Contains(schema.Children.SelectMany(x => x.Children), x => x.Name.StartsWith("Procedure With Space(", StringComparison.Ordinal));
     }
 
     [SeededPostgreSqlFact]

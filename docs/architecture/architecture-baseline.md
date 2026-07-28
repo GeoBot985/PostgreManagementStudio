@@ -121,3 +121,14 @@ new identities and invalidate only the affected old pool. Provider reset cannot
 be disabled, pool sizes are bounded, lifecycle attempts are correlated and
 stale-safe, and diagnostics exclude connection strings and credentials. See
 `docs/hardening/037-connection-contract.md`.
+
+## Sprint 38 metadata boundary
+
+Object navigation uses `IPostgresObjectMetadataProvider` through
+`HardenedMetadataService`. Browser roots load schemas only; schema and relation
+children load lazily through parameterised OID-scoped queries. Request owners
+provide cancellation, generation and stale-result protection. UI-independent
+OID identities drive refresh reconciliation and search compatibility, while
+bounded context-aware caches and structured diagnostics prevent cross-profile
+leakage and unobserved metadata failures. See
+`docs/hardening/038-metadata-contract.md`.
