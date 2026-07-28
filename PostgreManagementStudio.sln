@@ -15,6 +15,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PostgreManagementStudio.Pos
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PostgreManagementStudio.Results", "src\PostgreManagementStudio.Results\PostgreManagementStudio.Results.csproj", "{54607584-37D0-4037-A667-D129B6AA630D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PostgreManagementStudio.Results.Tests", "tests\PostgreManagementStudio.Results.Tests\PostgreManagementStudio.Results.Tests.csproj", "{1B3E7BA9-9999-461F-8F07-B38F772F9C9F}"
+EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PostgreManagementStudio.Core.Tests", "tests\PostgreManagementStudio.Core.Tests\PostgreManagementStudio.Core.Tests.csproj", "{1B3E7BA8-424F-461F-8F07-B38F772F9C9E}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PostgreManagementStudio.IntegrationTests", "tests\PostgreManagementStudio.IntegrationTests\PostgreManagementStudio.IntegrationTests.csproj", "{B4290272-8261-499F-8065-6F58ED75F7E2}"
@@ -102,6 +104,18 @@ Global
 		{1B3E7BA8-424F-461F-8F07-B38F772F9C9E}.Release|x64.ActiveCfg = Release|Any CPU
 		{1B3E7BA8-424F-461F-8F07-B38F772F9C9E}.Release|x64.Build.0 = Release|Any CPU
 		{1B3E7BA8-424F-461F-8F07-B38F772F9C9E}.Release|x86.ActiveCfg = Release|Any CPU
+		{1B3E7BA9-9999-461F-8F07-B38F772F9C9F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1B3E7BA9-9999-461F-8F07-B38F772F9C9F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1B3E7BA9-9999-461F-8F07-B38F772F9C9F}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{1B3E7BA9-9999-461F-8F07-B38F772F9C9F}.Debug|x64.Build.0 = Debug|Any CPU
+		{1B3E7BA9-9999-461F-8F07-B38F772F9C9F}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{1B3E7BA9-9999-461F-8F07-B38F772F9C9F}.Debug|x86.Build.0 = Debug|Any CPU
+		{1B3E7BA9-9999-461F-8F07-B38F772F9C9F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1B3E7BA9-9999-461F-8F07-B38F772F9C9F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1B3E7BA9-9999-461F-8F07-B38F772F9C9F}.Release|x64.ActiveCfg = Release|Any CPU
+		{1B3E7BA9-9999-461F-8F07-B38F772F9C9F}.Release|x64.Build.0 = Release|Any CPU
+		{1B3E7BA9-9999-461F-8F07-B38F772F9C9F}.Release|x86.ActiveCfg = Release|Any CPU
+		{1B3E7BA9-9999-461F-8F07-B38F772F9C9F}.Release|x86.Build.0 = Release|Any CPU
 		{1B3E7BA8-424F-461F-8F07-B38F772F9C9E}.Release|x86.Build.0 = Release|Any CPU
 		{B4290272-8261-499F-8065-6F58ED75F7E2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{B4290272-8261-499F-8065-6F58ED75F7E2}.Debug|Any CPU.Build.0 = Debug|Any CPU
