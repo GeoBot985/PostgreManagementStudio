@@ -1,8 +1,13 @@
 using System.ComponentModel;
+using System.Data.Common;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Threading;
 using PostgreManagementStudio.Application;
 using PostgreManagementStudio.Core;
+using PostgreManagementStudio.Postgres;
 
 namespace PostgreManagementStudio.Desktop;
 
@@ -15,8 +20,12 @@ public partial class MainWindow : Window
     private readonly BackupRestoreOperationService _backupRestore;
     private readonly PostgreSqlToolDiscoveryService _backupTools;
     private readonly BackupInspectionService _backupInspection;
+    private readonly IConnectionProbe _connectionProbe;
+    private readonly DispatcherTimer _statusTimer;
     private CancellationTokenSource? _metadataCancellation;
-    private bool _activeShutdownApproved;
+    private ShellConnectionInfo? _defaultConnection;
+    private bool _shutdownInProgress;
+    private bool _shutdownApproved;
 
     public MainWindow(
         QueryTabManager tabs,
@@ -25,7 +34,8 @@ public partial class MainWindow : Window
         ApplicationSettings settings,
         BackupRestoreOperationService backupRestore,
         PostgreSqlToolDiscoveryService backupTools,
-        BackupInspectionService backupInspection)
+        BackupInspectionService backupInspection,
+        IConnectionProbe connectionProbe)
     {
         InitializeComponent();
         _tabs = tabs;
@@ -35,81 +45,256 @@ public partial class MainWindow : Window
         _backupRestore = backupRestore;
         _backupTools = backupTools;
         _backupInspection = backupInspection;
+        _connectionProbe = connectionProbe;
+        _defaultConnection = ReadDevelopmentFallback();
+        RegisterCommands();
         AddTab();
+        _statusTimer = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background,
+            (_, _) => UpdateShellState(), Dispatcher);
+        _statusTimer.Start();
     }
+
+    private QueryTabView? ActiveView => (QueryTabs.SelectedItem as TabItem)?.Content as QueryTabView;
+    private QueryDocument? ActiveDocument => ActiveView?.Document;
+
+    private void RegisterCommands()
+    {
+        Bind(ShellCommands.NewQuery, _ => AddTab(), _ => true);
+        BindAsync(ShellCommands.Connect, ConnectAsync, _ => ActiveView?.IsExecuting != true);
+        BindAsync(ShellCommands.ChangeConnection, ConnectAsync, _ => ActiveView is { IsExecuting: false });
+        Bind(ShellCommands.Disconnect, _ => DisconnectActive(), _ => State.CanExecute(ShellCommandId.ChangeConnection) && State.IsConnected);
+        BindAsync(ShellCommands.OpenFile, () => ActiveView!.OpenFileAsync(), _ => State.CanExecute(ShellCommandId.OpenFile));
+        BindAsync(ShellCommands.Save, () => ActiveView!.SaveAsync(), _ => State.CanExecute(ShellCommandId.Save));
+        BindAsync(ShellCommands.SaveAs, () => ActiveView!.SaveAsAsync(), _ => State.CanExecute(ShellCommandId.SaveAs));
+        BindAsync(ShellCommands.CloseDocument, e => CloseDocumentAsync(ResolveView(e.Parameter)), _ => ActiveView is not null);
+        BindAsync(ShellCommands.CloseOtherDocuments, CloseOtherDocumentsAsync, _ => QueryTabs.Items.Count > 1);
+        BindAsync(ShellCommands.CloseAllDocuments, CloseAllDocumentsAsync, _ => QueryTabs.Items.Count > 0);
+        Bind(ShellCommands.NextDocument, _ => MoveDocument(1), _ => QueryTabs.Items.Count > 1);
+        Bind(ShellCommands.PreviousDocument, _ => MoveDocument(-1), _ => QueryTabs.Items.Count > 1);
+        BindAsync(ShellCommands.Execute, () => ActiveView!.ExecuteAsync(), _ => State.CanExecute(ShellCommandId.Execute));
+        BindAsync(ShellCommands.Cancel, () => ActiveView!.CancelAsync(), _ => State.CanExecute(ShellCommandId.Cancel));
+        BindAsync(ShellCommands.EstimatedPlan, () => ActiveView!.ShowEstimatedPlanAsync(), _ => State.CanExecute(ShellCommandId.EstimatedPlan));
+        Bind(ShellCommands.ToggleActualPlan, _ => ToggleActualPlan(), _ => State.CanExecute(ShellCommandId.ActualPlan));
+        BindAsync(ShellCommands.RefreshObjectExplorer, RefreshObjectExplorerAsync, _ => ActiveDocument is { ConnectionString.Length: > 0 });
+        Bind(ShellCommands.Find, _ => ActiveView!.ShowFind(false), _ => ActiveView is not null);
+        Bind(ShellCommands.FindNext, _ => ActiveView!.FindNext(), _ => ActiveView is not null);
+        Bind(ShellCommands.Replace, _ => ActiveView!.ShowFind(true), _ => ActiveView is not null);
+        Bind(ShellCommands.GoToLine, _ => ActiveView!.GoToLine(), _ => ActiveView is not null);
+        Bind(ShellCommands.CopyResults, _ => ActiveView!.CopyResults(false), _ => State.CanExecute(ShellCommandId.ResultAction));
+        Bind(ShellCommands.CopyResultsWithHeaders, _ => ActiveView!.CopyResults(true), _ => State.CanExecute(ShellCommandId.ResultAction));
+        BindAsync(ShellCommands.ExportResults, () => ActiveView!.ExportResultsAsync(), _ => State.CanExecute(ShellCommandId.ResultAction));
+        Bind(ShellCommands.FindInResults, _ => ActiveView!.ShowResultSearch(), _ => State.CanExecute(ShellCommandId.ResultAction));
+        Bind(ShellCommands.ClearResults, _ => ActiveView!.ClearResultView(), _ => State.CanExecute(ShellCommandId.ResultAction));
+        BindAsync(ShellCommands.SearchObjects, () => ActiveView!.SearchObjectsAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
+        BindAsync(ShellCommands.ImportData, () => ActiveView!.ImportDataAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
+        BindAsync(ShellCommands.Backup, () => ActiveView!.BackupDatabaseAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
+        BindAsync(ShellCommands.Restore, () => ActiveView!.RestoreDatabaseAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
+        BindAsync(ShellCommands.Maintenance, () => ActiveView!.RunMaintenanceAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
+        BindAsync(ShellCommands.Security, () => ActiveView!.ShowSecurityRolesAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
+        BindAsync(ShellCommands.ActivityMonitor, () => ActiveView!.ShowActivityMonitorAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
+        Bind(ShellCommands.ShowObjectExplorer, _ => SetObjectExplorerVisible(ObjectExplorerPane.Visibility != Visibility.Visible), _ => true);
+        Bind(ShellCommands.ShowResults, _ => ActiveView!.ShowOutput(0), _ => ActiveView is not null);
+        Bind(ShellCommands.ShowMessages, _ => ActiveView!.ShowOutput(1), _ => ActiveView is not null);
+        Bind(ShellCommands.ShowExecutionPlan, _ => ActiveView!.ShowOutput(2), _ => ActiveView is not null);
+        Bind(ShellCommands.About, _ => MessageBox.Show(this,
+            "PostgreManagementStudio\n\nA PostgreSQL management desktop for Windows.",
+            "About PostgreManagementStudio", MessageBoxButton.OK, MessageBoxImage.Information), _ => true);
+    }
+
+    private ShellCommandState State => new(
+        ActiveView is not null,
+        !string.IsNullOrWhiteSpace(ActiveDocument?.ConnectionString),
+        ActiveView?.IsExecuting == true,
+        ActiveView?.HasResults == true,
+        ActiveDocument?.IsDirty == true);
+
+    private void Bind(RoutedUICommand command, Action<ExecutedRoutedEventArgs> execute, Func<CanExecuteRoutedEventArgs, bool> canExecute)
+    {
+        CommandBindings.Add(new CommandBinding(command,
+            (_, e) => execute(e),
+            (_, e) => { e.CanExecute = canExecute(e); e.Handled = true; }));
+    }
+
+    private void BindAsync(RoutedUICommand command, Func<Task> execute, Func<CanExecuteRoutedEventArgs, bool> canExecute) =>
+        BindAsync(command, _ => execute(), canExecute);
+
+    private void BindAsync(RoutedUICommand command, Func<ExecutedRoutedEventArgs, Task> execute, Func<CanExecuteRoutedEventArgs, bool> canExecute) =>
+        CommandBindings.Add(new CommandBinding(command,
+            async (_, e) =>
+            {
+                try { await ObserveAsync(() => execute(e)); }
+                finally { CommandManager.InvalidateRequerySuggested(); UpdateShellState(); }
+            },
+            (_, e) => { e.CanExecute = canExecute(e); e.Handled = true; }));
 
     private void AddTab()
     {
-        var doc = _tabs.Open(Environment.GetEnvironmentVariable("PMS_CONNECTION_STRING"), _settings.DefaultDatabase);
+        var connection = _defaultConnection;
+        var doc = _tabs.Open(connection?.ConnectionString, connection?.Database ?? _settings.DefaultDatabase);
+        doc.ConnectionProfileId = connection is null ? string.Empty :
+            connection.IsDevelopmentFallback ? "environment:PMS_CONNECTION_STRING" : "interactive";
         doc.CommandTimeout = TimeSpan.FromSeconds(_settings.CommandTimeoutSeconds);
         doc.CancellationTimeout = TimeSpan.FromSeconds(_settings.CancellationTimeoutSeconds);
-        var view = new QueryTabView(doc, _destructiveOperations, _settings,
-            _backupRestore, _backupTools, _backupInspection);
-        var tab = new TabItem { Header = doc.Title, Content = view, Tag = doc };
-        view.DirtyChanged += (_, _) => tab.Header = doc.Title + (doc.IsDirty ? "*" : string.Empty);
+        var view = new QueryTabView(doc, _destructiveOperations, _settings, _backupRestore, _backupTools, _backupInspection);
+        var tab = new TabItem { Content = view, Tag = doc };
+        tab.Header = CreateTabHeader(tab, view);
+        tab.ToolTip = view.SafeToolTip;
+        view.DirtyChanged += View_StateChanged;
+        view.WorkspaceStateChanged += View_StateChanged;
         QueryTabs.Items.Add(tab);
         QueryTabs.SelectedItem = tab;
+        UpdateTab(tab, view);
+        UpdateShellState();
     }
 
-    private void NewQuery_Click(object sender, RoutedEventArgs e) => AddTab();
+    private FrameworkElement CreateTabHeader(TabItem tab, QueryTabView view)
+    {
+        var panel = new StackPanel { Orientation = Orientation.Horizontal };
+        panel.Children.Add(new TextBlock { Text = view.DisplayTitle, VerticalAlignment = VerticalAlignment.Center, Tag = "title" });
+        var close = new Button
+        {
+            Content = "×",
+            FontSize = 14,
+            Padding = new Thickness(3, 0, 3, 0),
+            Margin = new Thickness(7, 0, 0, 0),
+            ToolTip = "Close query (Ctrl+W)",
+            Command = ShellCommands.CloseDocument,
+            CommandParameter = tab,
+        };
+        panel.Children.Add(close);
+        return panel;
+    }
+
+    private void View_StateChanged(object? sender, EventArgs e)
+    {
+        if (sender is QueryTabView view && FindTab(view) is { } tab) UpdateTab(tab, view);
+        UpdateShellState();
+        CommandManager.InvalidateRequerySuggested();
+    }
+
+    private static void UpdateTab(TabItem tab, QueryTabView view)
+    {
+        if (tab.Header is StackPanel panel && panel.Children.OfType<TextBlock>().FirstOrDefault(x => Equals(x.Tag, "title")) is { } title)
+            title.Text = view.DisplayTitle;
+        tab.ToolTip = view.SafeToolTip;
+    }
+
+    private TabItem? FindTab(QueryTabView view) =>
+        QueryTabs.Items.OfType<TabItem>().FirstOrDefault(x => ReferenceEquals(x.Content, view));
+
+    private QueryTabView? ResolveView(object? parameter) => parameter switch
+    {
+        TabItem { Content: QueryTabView view } => view,
+        QueryTabView view => view,
+        _ => ActiveView,
+    };
+
+    private async Task<bool> CloseDocumentAsync(QueryTabView? view)
+    {
+        if (view is null) return true;
+        var document = view.Document;
+        if (document.IsExecuting)
+        {
+            var answer = MessageBox.Show(this, $"Cancel the running query in {view.DisplayTitle} and close it?",
+                "Query is running", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            if (answer != MessageBoxResult.Yes) return false;
+            if (!await document.CancelAsync()) return false;
+        }
+        if (document.IsDirty)
+        {
+            var answer = MessageBox.Show(this, $"Save changes to {view.DisplayTitle.TrimEnd('*')}?",
+                "Unsaved query", MessageBoxButton.YesNoCancel, MessageBoxImage.Warning);
+            if (answer == MessageBoxResult.Cancel) return false;
+            if (answer == MessageBoxResult.Yes && !await view.SaveAsync()) return false;
+            if (answer == MessageBoxResult.No) document.MarkDirty(false);
+        }
+
+        view.DirtyChanged -= View_StateChanged;
+        view.WorkspaceStateChanged -= View_StateChanged;
+        await document.DisposeAsync();
+        _tabs.TryClose(document, discardChanges: true);
+        if (FindTab(view) is { } tab) QueryTabs.Items.Remove(tab);
+        UpdateShellState();
+        return true;
+    }
+
+    private async Task CloseOtherDocumentsAsync()
+    {
+        var keep = ActiveView;
+        foreach (var view in QueryTabs.Items.OfType<TabItem>().Select(x => x.Content).OfType<QueryTabView>().Where(x => !ReferenceEquals(x, keep)).ToArray())
+            if (!await CloseDocumentAsync(view)) return;
+    }
+
+    private async Task CloseAllDocumentsAsync()
+    {
+        foreach (var view in QueryTabs.Items.OfType<TabItem>().Select(x => x.Content).OfType<QueryTabView>().ToArray())
+            if (!await CloseDocumentAsync(view)) return;
+    }
+
+    private void MoveDocument(int delta)
+    {
+        if (QueryTabs.Items.Count < 2) return;
+        QueryTabs.SelectedIndex = (QueryTabs.SelectedIndex + delta + QueryTabs.Items.Count) % QueryTabs.Items.Count;
+    }
+
+    private async Task ConnectAsync()
+    {
+        var current = ActiveDocument is { ConnectionString.Length: > 0 } doc ? ParseConnection(doc.ConnectionString, false) : _defaultConnection;
+        var dialog = new ConnectionDialog(_connectionProbe, current) { Owner = this };
+        if (dialog.ShowDialog() != true || dialog.Connection is null) return;
+        _defaultConnection = dialog.Connection;
+        if (ActiveView is null) AddTab();
+        else ActiveView.ApplyConnection(dialog.Connection);
+        UpdateShellState();
+        await RefreshObjectExplorerAsync();
+    }
+
+    private void DisconnectActive()
+    {
+        if (ActiveView?.IsExecuting == true) return;
+        ActiveView?.ApplyConnection(null);
+        _defaultConnection = null;
+        ObjectExplorerTree.ItemsSource = new[] { "Disconnected. Use File > Connect to select a PostgreSQL server." };
+        UpdateShellState();
+    }
+
+    private void ToggleActualPlan()
+    {
+        if (ActiveView is null) return;
+        ActiveView.IncludeActualPlan = !ActiveView.IncludeActualPlan;
+        ActualPlanButton.IsChecked = ActiveView.IncludeActualPlan;
+    }
+
+    private async void Window_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (_defaultConnection?.IsDevelopmentFallback == true)
+            ConnectionStatusText.Text = "Connected (development environment fallback)";
+        await RefreshObjectExplorerAsync();
+    }
 
     private void QueryTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (QueryTabs.SelectedItem is TabItem tab && tab.Tag is QueryDocument doc) _tabs.Activate(doc);
+        if (QueryTabs.SelectedItem is TabItem { Tag: QueryDocument doc }) _tabs.Activate(doc);
+        ActualPlanButton.IsChecked = ActiveView?.IncludeActualPlan == true;
+        UpdateShellState();
+        CommandManager.InvalidateRequerySuggested();
     }
 
-    private async void Window_Closing(object? sender, CancelEventArgs e)
+    private void DatabaseSelector_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
     {
-        _metadataCancellation?.Cancel();
-        if (_activeShutdownApproved) return;
-        foreach (TabItem tab in QueryTabs.Items)
-        {
-            if (tab.Tag is not QueryDocument { IsDirty: true } doc) continue;
-            var result = MessageBox.Show($"Discard changes in {doc.Title}?", "Unsaved query", MessageBoxButton.YesNoCancel, MessageBoxImage.Warning);
-            if (result == MessageBoxResult.Yes) continue;
-            e.Cancel = true;
-            return;
-        }
-        var active = _tabs.Documents.Where(document => document.IsExecuting).ToArray();
-        if (active.Length == 0)
-        {
-            foreach (var document in _tabs.Documents) document.DisposeAsync().AsTask().GetAwaiter().GetResult();
-            _objectExplorer.DisposeAsync().AsTask().GetAwaiter().GetResult();
-            return;
-        }
-        var confirmation = MessageBox.Show(
-            $"Cancel {active.Length} active query execution(s) and close?",
-            "Queries are still running",
-            MessageBoxButton.YesNoCancel,
-            MessageBoxImage.Warning);
-        if (confirmation != MessageBoxResult.Yes) { e.Cancel = true; return; }
-        e.Cancel = true;
-        try
-        {
-            await Task.WhenAll(active.Select(document => document.CancelAsync()));
-            foreach (var document in _tabs.Documents) await document.DisposeAsync();
-            await _objectExplorer.DisposeAsync();
-            _activeShutdownApproved = true;
-            Close();
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show(SecretRedactor.Redact(ex.Message), "Shutdown cleanup failed", MessageBoxButton.OK, MessageBoxImage.Error);
-        }
+        if (ActiveView is null || ActiveView.IsExecuting) return;
+        ActiveView.ChangeDatabase(DatabaseSelector.Text);
+        UpdateShellState();
     }
-
-    private async void Window_Loaded(object sender, RoutedEventArgs e) => await RefreshObjectExplorerAsync();
-    private async void RefreshObjectExplorer_Click(object sender, RoutedEventArgs e) => await RefreshObjectExplorerAsync();
 
     private async Task RefreshObjectExplorerAsync()
     {
-        var connectionString = Environment.GetEnvironmentVariable("PMS_CONNECTION_STRING");
-        if (string.IsNullOrWhiteSpace(connectionString))
+        var document = ActiveDocument;
+        if (document is null || string.IsNullOrWhiteSpace(document.ConnectionString))
         {
-            ObjectExplorerTree.ItemsSource = new[] { "Configure PMS_CONNECTION_STRING to load PostgreSQL objects." };
+            ObjectExplorerTree.ItemsSource = new[] { "Disconnected. Use File > Connect to load PostgreSQL objects." };
             return;
         }
-
         try
         {
             _metadataCancellation?.Cancel();
@@ -117,8 +302,7 @@ public partial class MainWindow : Window
             _metadataCancellation = new CancellationTokenSource();
             var expanded = ExpandedIdentities(ObjectExplorerTree.Items).ToHashSet();
             var selectionPath = SelectedIdentityPath();
-            var root = await _objectExplorer.LoadRootAsync(
-                connectionString, _settings.DefaultDatabase, refresh: true,
+            var root = await _objectExplorer.LoadRootAsync(document.ConnectionString, document.Database, refresh: true,
                 cancellationToken: _metadataCancellation.Token);
             ObjectExplorerTree.ItemsSource = null;
             ObjectExplorerTree.Items.Clear();
@@ -136,12 +320,129 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             var message = $"Object Explorer unavailable: {SecretRedactor.Redact(ex.Message)}";
-            if (ObjectExplorerTree.Items.Count == 0)
-                ObjectExplorerTree.ItemsSource = new[] { message };
-            else
-                ObjectExplorerTree.ToolTip = message;
+            if (ObjectExplorerTree.Items.Count == 0) ObjectExplorerTree.ItemsSource = new[] { message };
+            else ObjectExplorerTree.ToolTip = message;
         }
     }
+
+    private void UpdateShellState()
+    {
+        var view = ActiveView;
+        var doc = view?.Document;
+        if (doc is null)
+        {
+            ConnectionToolbarText.Text = "No active query";
+            DatabaseSelector.Text = string.Empty;
+            SetStatus("Disconnected", "—", "—", "—", "No active query", "—", (1, 1));
+            return;
+        }
+        var connected = !string.IsNullOrWhiteSpace(doc.ConnectionString);
+        DatabaseSelector.IsEnabled = connected && !view!.IsExecuting;
+        DatabaseSelector.Text = doc.Database;
+        var parsed = connected ? DatabaseConnection.FromConnectionString(doc.ConnectionString) : null;
+        ConnectionToolbarText.Text = connected ? $"{parsed!.Username}@{parsed.Host}:{parsed.Port}" : "Connect…";
+        var elapsed = view!.ExecutionElapsed;
+        var query = view.IsExecuting
+            ? $"{doc.State} · {elapsed?.ToString(@"hh\\:mm\\:ss") ?? "00:00:00"}"
+            : doc.Message;
+        var rows = view.HasResults ? $"{view.RowsReceived:N0} returned; {view.RowsAffected:N0} affected" : "—";
+        SetStatus(connected ? (doc.ConnectionProfileId.StartsWith("environment", StringComparison.Ordinal) ? "Connected (environment fallback)" : "Connected") : "Disconnected",
+            parsed?.Host ?? "—", doc.Database, parsed?.Username ?? "—", query, rows, view.CaretPosition);
+    }
+
+    private void SetStatus(string connection, string server, string database, string role, string query, string rows, (int Line, int Column) caret)
+    {
+        ConnectionStatusText.Text = connection;
+        ServerStatusText.Text = $"Server: {server}";
+        DatabaseStatusText.Text = $"Database: {database}";
+        RoleStatusText.Text = $"Role: {role}";
+        QueryStatusText.Text = query;
+        RowsStatusText.Text = $"Rows: {rows}";
+        CaretStatusText.Text = $"Ln {caret.Line}, Col {caret.Column}  INS";
+    }
+
+    private static ShellConnectionInfo? ReadDevelopmentFallback()
+    {
+        var value = Environment.GetEnvironmentVariable("PMS_CONNECTION_STRING");
+        return string.IsNullOrWhiteSpace(value) ? null : ParseConnection(value, true);
+    }
+
+    private static ShellConnectionInfo ParseConnection(string value, bool fallback)
+    {
+        var connection = DatabaseConnection.FromConnectionString(value);
+        var raw = new DbConnectionStringBuilder { ConnectionString = value };
+        var sslText = raw.TryGetValue("SSL Mode", out var ssl) ? Convert.ToString(ssl) : "Prefer";
+        var sslMode = Enum.TryParse<Npgsql.SslMode>(sslText?.Replace(" ", ""), true, out var parsed) ? parsed : Npgsql.SslMode.Prefer;
+        return new(value, connection.Host, connection.Port, connection.Database, connection.Username, sslMode, null, null, fallback);
+    }
+
+    private void SetObjectExplorerVisible(bool visible)
+    {
+        ObjectExplorerPane.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        ObjectExplorerColumn.Width = visible ? new GridLength(260) : new GridLength(0);
+        ObjectExplorerSplitterColumn.Width = visible ? new GridLength(5) : new GridLength(0);
+    }
+
+    private async void Window_Closing(object? sender, CancelEventArgs e)
+    {
+        _metadataCancellation?.Cancel();
+        if (_shutdownApproved) return;
+        var openViews = QueryTabs.Items.OfType<TabItem>().Select(x => x.Content).OfType<QueryTabView>().ToArray();
+        if (openViews.All(view => !view.Document.IsDirty && !view.IsExecuting))
+        {
+            _shutdownApproved = true;
+            _statusTimer.Stop();
+            DisposeAfterCleanClose(openViews);
+            return;
+        }
+        e.Cancel = true;
+        if (_shutdownInProgress) return;
+        _shutdownInProgress = true;
+        try
+        {
+            foreach (var view in QueryTabs.Items.OfType<TabItem>().Select(x => x.Content).OfType<QueryTabView>().ToArray())
+                if (!await CloseDocumentAsync(view)) return;
+            await _objectExplorer.DisposeAsync();
+            _statusTimer.Stop();
+            _shutdownApproved = true;
+            Close();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, SecretRedactor.Redact(ex.Message), "Shutdown cleanup failed", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally { _shutdownInProgress = false; }
+    }
+
+    private async void DisposeAfterCleanClose(IReadOnlyList<QueryTabView> views)
+    {
+        try
+        {
+            foreach (var view in views) await view.Document.DisposeAsync();
+            await _objectExplorer.DisposeAsync();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.WriteLine($"Shell cleanup failed: {SecretRedactor.Redact(ex.Message)}");
+        }
+    }
+
+    private async Task ObserveAsync(Func<Task> action)
+    {
+        try { await action(); }
+        catch (Exception ex)
+        {
+            QueryStatusText.Text = "Command failed";
+            MessageBox.Show(this, SecretRedactor.Redact(ex.Message), "Command failed", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void Exit_Click(object sender, RoutedEventArgs e) => Close();
+    private void ToggleToolbars_Click(object sender, RoutedEventArgs e) => ShellToolbars.Visibility = ShellToolbars.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+    private void ToggleStatusBar_Click(object sender, RoutedEventArgs e) => ShellStatusBar.Visibility = ShellStatusBar.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+    private void ResetLayout_Click(object sender, RoutedEventArgs e) { SetObjectExplorerVisible(true); Width = 1100; Height = 768; }
+    private void Documentation_Click(object sender, RoutedEventArgs e) => MessageBox.Show(this, "Documentation is available in README.md and the docs folder.", "Documentation");
+    private void Diagnostics_Click(object sender, RoutedEventArgs e) => MessageBox.Show(this, $"Settings: {ProductionServices.DefaultSettingsPath}\nConnection strings and passwords are never included.", "Diagnostics");
 
     private TreeViewItem ToTreeItem(ObjectExplorerNode node, IReadOnlySet<PostgresObjectIdentity>? expanded = null)
     {
@@ -152,37 +453,21 @@ public partial class MainWindow : Window
         return item;
     }
 
-    private void Populate(
-        TreeViewItem item,
-        ObjectExplorerNode node,
-        IReadOnlySet<PostgresObjectIdentity>? expanded = null)
+    private void Populate(TreeViewItem item, ObjectExplorerNode node, IReadOnlySet<PostgresObjectIdentity>? expanded = null)
     {
         item.Items.Clear();
-        if (!node.IsLoaded && node.HasChildren)
-        {
-            item.Items.Add(new TreeViewItem { Header = "Loading…" });
-            return;
-        }
+        if (!node.IsLoaded && node.HasChildren) { item.Items.Add(new TreeViewItem { Header = "Loading…" }); return; }
         foreach (var child in node.Children) item.Items.Add(ToTreeItem(child, expanded));
-        if (node.Error is not null)
-            item.Items.Add(new TreeViewItem { Header = node.Error.Message, IsEnabled = false });
+        if (node.Error is not null) item.Items.Add(new TreeViewItem { Header = node.Error.Message, IsEnabled = false });
     }
 
     private async void TreeItem_Expanded(object sender, RoutedEventArgs e)
     {
         if (sender is not TreeViewItem { Tag: ObjectExplorerNode node } item || node.IsLoaded) return;
         e.Handled = true;
-        try
-        {
-            await _objectExplorer.ExpandAsync(node, cancellationToken: _metadataCancellation?.Token ?? default);
-            Populate(item, node);
-        }
+        try { await _objectExplorer.ExpandAsync(node, cancellationToken: _metadataCancellation?.Token ?? default); Populate(item, node); }
         catch (OperationCanceledException) { }
-        catch (Exception ex)
-        {
-            item.Items.Clear();
-            item.Items.Add(new TreeViewItem { Header = SecretRedactor.Redact(ex.Message), IsEnabled = false });
-        }
+        catch (Exception ex) { item.Items.Clear(); item.Items.Add(new TreeViewItem { Header = SecretRedactor.Redact(ex.Message), IsEnabled = false }); }
     }
 
     private static IEnumerable<PostgresObjectIdentity> ExpandedIdentities(ItemCollection items)

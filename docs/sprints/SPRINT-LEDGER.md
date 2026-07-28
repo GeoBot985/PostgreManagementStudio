@@ -40,3 +40,5 @@
 | Sprint 036 | SQL Editor Reliability and Execution Hardening | Complete with lifecycle, context, cancellation, transaction, and failure regression coverage |
 | Sprint 037 | Connection Management and Session Hardening | Complete with central configuration, lifecycle, credential, pooling, session-isolation, and live failure coverage |
 | Sprint 038 | Object Browser and Metadata Hardening | Complete with lazy OID-based loading, stale-safe refresh, bounded caches, permissions, and live catalog coverage |
+| Sprint 039 | Backup, Restore, and Data-Safety Hardening | Complete with hardened tool trust, targeting, credentials, output, cancellation, confirmation, and live disposable restore coverage |
+| Sprint 040 | Traditional Application Shell and Workflow Reachability | Complete with native menus, overflow toolbars, shared commands, interactive session connection, safe per-tab context, close lifecycle, output panes, status bar, and desktop reachability tests |

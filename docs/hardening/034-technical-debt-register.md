@@ -23,6 +23,17 @@ Sorted by release blocker, severity, likelihood, and user impact.
 | TD-034-017 | No | Low | Certain | SDK reproducibility | no `global.json` | developer SDK drift | pin reviewed SDK / 41 | Small |
 | TD-034-018 | No | Low | Certain | Documentation | historical `HANDOFF.md` remains Sprint 2 focused | onboarding confusion | archive or replace after hardening workflow is agreed / 35 | Small |
 
+## Sprint 40 disposition
+
+| ID | Disposition after Sprint 40 | Evidence |
+|---|---|---|
+| TD-034-001 | Reduced, not closed | Existing verified workflows are organised in native menus/toolbars; incomplete Schema Compare is removed. Rich uncomposed Sprint 20–33 workspaces remain outside the release surface |
+| TD-034-002 | Closed for the Sprint 40 scope | `ConnectionDialog` provides session-only Test Connection and Connect; environment configuration is only a visibly labelled development fallback |
+| TD-034-003 | Mitigated | Schema Compare is absent from `ShellCommands` and the release menus until faithful extraction and two-endpoint selection exist |
+| TD-034-004 | Reduced, not closed | All shell surfaces route through `ShellCommands`; some feature adapters remain directly owned by `QueryTabView` |
+| TD-034-006 | Reduced | `ShellWorkflowTests` cover command state, shared routing, menu discovery, resizing, document titles, and release-surface exclusions; full packaged UI automation remains future work |
+| TD-034-007 | Closed | Closing a tab confirms unsaved state, protects/cancels running execution, disposes the `QueryDocument`, and removes it from `QueryTabManager` |
+
 No Critical finding is represented as deferred without a release-blocking
 status. High findings have an assigned hardening sprint.
 

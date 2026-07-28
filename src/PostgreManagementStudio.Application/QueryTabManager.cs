@@ -11,7 +11,7 @@ public sealed class QueryTabManager
     public IReadOnlyList<QueryDocument> Documents => _documents;
     public QueryDocument ActiveDocument { get; private set; } = null!;
     public QueryDocument Open(string? connectionString = null, string database = "postgres")
-    { var doc = new QueryDocument(_executionService, $"Query {++_nextNumber}", _telemetry) { ConnectionString = connectionString ?? string.Empty, Database = database }; _documents.Add(doc); ActiveDocument = doc; return doc; }
+    { var doc = new QueryDocument(_executionService, $"SQLQuery{++_nextNumber}.sql", _telemetry) { ConnectionString = connectionString ?? string.Empty, Database = database }; _documents.Add(doc); ActiveDocument = doc; return doc; }
     public bool TryClose(QueryDocument document, bool discardChanges)
     { if (!_documents.Contains(document)) return false; if (document.IsExecuting || (document.IsDirty && !discardChanges)) return false; _documents.Remove(document); ActiveDocument = _documents.LastOrDefault()!; return true; }
     public void Activate(QueryDocument document) { if (_documents.Contains(document)) ActiveDocument = document; }
