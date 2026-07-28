@@ -6,5 +6,5 @@
         xmlns:local="clr-namespace:PostgreManagementStudio.Desktop"
         mc:Ignorable="d"
     Title="PostgreManagementStudio" Height="450" Width="800">
-    <Grid Margin="24"><StackPanel><TextBlock Text="PostgreManagementStudio" FontSize="24"/><Button Content="Check PostgreSQL version" Click="CheckVersion_Click" Margin="0,20,0,10" Padding="8"/><TextBlock x:Name="ResultText" TextWrapping="Wrap"/></StackPanel></Grid>
+    <Grid Margin="24"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition/><RowDefinition Height="Auto"/></Grid.RowDefinitions><TextBlock Text="PostgreManagementStudio" FontSize="24"/><TextBox x:Name="SqlText" Grid.Row="1" Text="SELECT version();" AcceptsReturn="True" Height="70" Margin="0,16,0,8"/><StackPanel Grid.Row="2"><TextBox x:Name="ResultText" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/><StackPanel Orientation="Horizontal" Margin="0,8,0,0"><Button Content="Execute" Click="Execute_Click" Padding="12,6"/><Button Content="Cancel" Click="Cancel_Click" Padding="12,6" Margin="8,0,0,0"/></StackPanel></StackPanel><TextBlock x:Name="StatusText" Grid.Row="3" Margin="0,8,0,0"/></Grid>
 </Window>
