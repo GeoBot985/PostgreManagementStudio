@@ -22,3 +22,4 @@
 | 018 | Complete with documented limitations | Activity filters, bounded sampling, capacity classification, redacted exports, stale-PID identity validation, protected bulk session actions, action history, and isolated Npgsql session management |
 | 019 | Complete with documented limitations | Canonical schema models, comparison classification, rename candidates, risk rules, dependency ordering, destructive exclusion, deterministic synchronisation scripts, snapshots, PostgreSQL extraction, and temporary WPF compare entry point |
 | Sprint 020 | Schema Compare and Synchronisation Preview | Complete with documented UI and catalog limitations |
+| Sprint 021 | Data Import and Export Wizard | Complete with documented UI and integration limitations |
