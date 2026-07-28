@@ -28,3 +28,4 @@
 | Sprint 024 | Execution Plan Analysis and Visualisation | Complete with documented UI and integration limitations |
 | Sprint 025 | Index Analysis and Recommendation Workspace | Complete with documented UI and collector limitations |
 | Sprint 026 | Query Plan Explorer and Performance Diagnostics | Complete with documented UI and integration limitations |
+| Sprint 027 | Execution Plan Comparison and Regression Detection | Complete with documented UI limitations |
