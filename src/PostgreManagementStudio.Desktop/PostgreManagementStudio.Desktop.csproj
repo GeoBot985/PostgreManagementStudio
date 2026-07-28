@@ -1,0 +1,17 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\PostgreManagementStudio.Application\PostgreManagementStudio.Application.csproj" />
+    <ProjectReference Include="..\PostgreManagementStudio.Postgres\PostgreManagementStudio.Postgres.csproj" />
+    <ProjectReference Include="..\PostgreManagementStudio.Results\PostgreManagementStudio.Results.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+</Project>
