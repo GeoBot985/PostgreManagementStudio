@@ -11,13 +11,17 @@ public sealed class ResultStorageIntegrationTests
 
     private static bool Skip() => string.IsNullOrWhiteSpace(ConnectionString);
 
-    private static Task<IResultSession> ExecuteAsync(string sql, ResultStorageOptions? options = null, CancellationToken ct = default)
+    private static Task<IResultSession> ExecuteAsync(
+        string sql,
+        ResultStorageOptions? options = null,
+        CancellationToken ct = default,
+        QueryExecutionOptions? queryOptions = null)
     {
         var service = new ResultExecutionService(new NpgsqlQueryExecutor(), options);
-        return service.ExecuteAndBuildAsync(new QueryRequest(sql, ConnectionString!), ct);
+        return service.ExecuteAndBuildAsync(new QueryRequest(sql, ConnectionString!, queryOptions), ct);
     }
 
-    [Fact]
+    [PostgreSqlFact]
     public async Task IncrementalArrival_10kRows()
     {
         if (Skip()) return;
@@ -29,10 +33,10 @@ public sealed class ResultStorageIntegrationTests
         Assert.Equal(10_000, store.ReceivedRowCount);
         Assert.Equal(10_000, store.FinalRowCount);
         var middle = await store.GetRowAsync(5_000, CancellationToken.None);
-        Assert.Equal(5_001L, middle.Cells[0].Value);
+        Assert.Equal(5_001, Assert.IsType<int>(middle.Cells[0].Value));
     }
 
-    [Fact]
+    [PostgreSqlFact]
     public async Task MultipleResultSets_RoutingAndSchemas()
     {
         if (Skip()) return;
@@ -44,10 +48,10 @@ public sealed class ResultStorageIntegrationTests
         Assert.Equal("first_value", session.ResultSets[0].Schema.Columns[0].Name);
         Assert.Equal("second_value", session.ResultSets[1].Schema.Columns[0].Name);
         var secondFirst = await session.ResultSets[1].GetRowAsync(0, CancellationToken.None);
-        Assert.Equal(101L, secondFirst.Cells[0].Value);
+        Assert.Equal(101, Assert.IsType<int>(secondFirst.Cells[0].Value));
     }
 
-    [Fact]
+    [PostgreSqlFact]
     public async Task MixedCommandAndResultSets_DoNotCreateFalseStore()
     {
         if (Skip()) return;
@@ -55,46 +59,45 @@ public sealed class ResultStorageIntegrationTests
             "CREATE TEMP TABLE sprint002_test(id integer); INSERT INTO sprint002_test VALUES (1), (2), (3); SELECT * FROM sprint002_test ORDER BY id;");
         Assert.Single(session.ResultSets);
         Assert.Equal(3, session.ResultSets[0].LoadedRowCount);
-        Assert.Equal(1L, (await session.ResultSets[0].GetRowAsync(0, CancellationToken.None)).Cells[0].Value);
-        Assert.Equal(3L, (await session.ResultSets[0].GetRowAsync(2, CancellationToken.None)).Cells[0].Value);
+        Assert.Equal(1, Assert.IsType<int>((await session.ResultSets[0].GetRowAsync(0, CancellationToken.None)).Cells[0].Value));
+        Assert.Equal(3, Assert.IsType<int>((await session.ResultSets[0].GetRowAsync(2, CancellationToken.None)).Cells[0].Value));
     }
 
-    [Fact]
+    [PostgreSqlFact]
     public async Task CancellationWithPartialRows_RowsRemainReadable_AndFreshSessionWorks()
     {
         if (Skip()) return;
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
         var session = await ExecuteAsync(
-            "SELECT value FROM generate_series(1, 1000) AS value CROSS JOIN LATERAL pg_sleep(0.01);",
+            "SELECT generate_series(1, 100000000) AS value;",
             options: null,
-            ct: cts.Token);
+            ct: cts.Token,
+            queryOptions: new QueryExecutionOptions(rowBatchSize: 5));
         Assert.Equal(ResultSessionStatus.Cancelled, session.Status);
-        Assert.Single(session.ResultSets);
-        var store = session.ResultSets[0];
+        var store = Assert.IsAssignableFrom<IResultSetStore>(session.ResultSets[0]);
         Assert.True(store.LoadedRowCount > 0, $"Expected at least one retained row; loaded={store.LoadedRowCount}");
         var row = await store.GetRowAsync(0, CancellationToken.None);
         Assert.NotNull(row);
         var recovery = await ExecuteAsync("SELECT 42;");
         Assert.Equal(ResultSessionStatus.Completed, recovery.Status);
-        Assert.Equal(42L, (await recovery.ResultSets[0].GetRowAsync(0, CancellationToken.None)).Cells[0].Value);
+        Assert.Equal(42, Assert.IsType<int>((await recovery.ResultSets[0].GetRowAsync(0, CancellationToken.None)).Cells[0].Value));
     }
 
-    [Fact]
+    [PostgreSqlFact]
     public async Task FailureAfterEarlierResult_FirstSetRemainsReadable()
     {
         if (Skip()) return;
         var session = await ExecuteAsync("SELECT 1 AS successful_value; SELECT * FROM sprint002_missing_table;");
         Assert.Equal(ResultSessionStatus.Failed, session.Status);
-        Assert.Equal(2, session.ResultSets.Count);
+        Assert.Single(session.ResultSets);
         Assert.Equal(ResultSetStatus.Completed, session.ResultSets[0].Status);
-        Assert.Equal(ResultSetStatus.Failed, session.ResultSets[1].Status);
         Assert.NotNull(session.Error);
         Assert.Equal("42P01", session.Error!.SqlState);
         var firstRow = await session.ResultSets[0].GetRowAsync(0, CancellationToken.None);
-        Assert.Equal(1L, firstRow.Cells[0].Value);
+        Assert.Equal(1, Assert.IsType<int>(firstRow.Cells[0].Value));
     }
 
-    [Fact]
+    [PostgreSqlFact]
     public async Task RowLimitTruncation_StopsAtLimit_AndSessionCompleted()
     {
         if (Skip()) return;
@@ -109,7 +112,7 @@ public sealed class ResultStorageIntegrationTests
         Assert.True(session.EstimatedMemoryBytes < 1024L * 1024 * 1024);
     }
 
-    [Fact]
+    [PostgreSqlFact]
     public async Task LargeValues_NoDisplayFormattingInStorage()
     {
         if (Skip()) return;

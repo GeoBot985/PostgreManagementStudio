@@ -11,6 +11,14 @@ public sealed class IndexAnalysisWorkspaceTests
     { var indexes = new[] { Index("ix_a"), Index("ix_b"), Index("ix_gin", "gin") }; var scoped = IndexWorkspaceService.ApplyScope(indexes, new(Schema: "public", Table: "orders")); var summary = IndexWorkspaceService.Summarize(scoped, Array.Empty<ForeignKeyMetadata>()); Assert.Equal(3, summary.TotalIndexes); Assert.Equal(1, summary.OverlapGroups); }
 
     [Fact]
+    public void DatabaseScopeIsContextAndEmptyFiltersAreIgnored()
+    {
+        var indexes = new[] { Index("ix_a") };
+        var scoped = IndexWorkspaceService.ApplyScope(indexes, new(Database: "postgres", Schema: "", Table: "", Index: ""));
+        Assert.Same(indexes[0], Assert.Single(scoped));
+    }
+
+    [Fact]
     public void NonBtreeIndexesAreNotPrefixOverlaps()
     { var a = Index("gin_a", "gin"); var b = Index("gin_b", "gin"); Assert.Empty(IndexAnalysisService.FindOverlaps(new[] { a, b })); }
 

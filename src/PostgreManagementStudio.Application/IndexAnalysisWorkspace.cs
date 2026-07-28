@@ -7,7 +7,13 @@ public sealed record MissingIndexCandidate(string Schema, string Table, IReadOnl
 public sealed record IndexCandidateValidation(bool IsValid, IReadOnlyList<string> Errors, IReadOnlyList<string> Warnings);
 public static class IndexWorkspaceService
 {
-    public static IReadOnlyList<IndexMetadata> ApplyScope(IEnumerable<IndexMetadata> indexes, IndexAnalysisScope scope) => indexes.Where(x => (scope.Database is null || scope.Database == "" || true) && (scope.Schema is null || x.SchemaName == scope.Schema) && (scope.Table is null || x.TableName == scope.Table) && (scope.Index is null || x.IndexName == scope.Index)).ToArray();
+    // Index metadata is loaded for one database at a time. Database is therefore
+    // workspace context, while the remaining fields are filters over this set.
+    public static IReadOnlyList<IndexMetadata> ApplyScope(IEnumerable<IndexMetadata> indexes, IndexAnalysisScope scope) =>
+        indexes.Where(x =>
+            (string.IsNullOrEmpty(scope.Schema) || x.SchemaName == scope.Schema) &&
+            (string.IsNullOrEmpty(scope.Table) || x.TableName == scope.Table) &&
+            (string.IsNullOrEmpty(scope.Index) || x.IndexName == scope.Index)).ToArray();
     public static IndexWorkspaceSummary Summarize(IEnumerable<IndexMetadata> indexes, IEnumerable<ForeignKeyMetadata> foreignKeys)
     { var all = indexes.ToArray(); var duplicates = IndexAnalysisService.FindDuplicates(all); var overlaps = IndexAnalysisService.FindOverlaps(all); var recommendations = IndexAnalysisService.Recommend(all, foreignKeys); return new(all.Length, all.Sum(x => x.SizeBytes), all.Count(x => !x.IsValid || !x.IsReady || !x.IsLive), duplicates.Count, overlaps.Count, recommendations.Count(x => x.Category == IndexRecommendationCategory.MissingForeignKey), all.Count(x => x.IsPrimary || x.IsConstraintBacked || x.IsReplicaIdentity), recommendations.Count); }
     public static MissingIndexCandidate FromPlan(ExecutionPlanNode node, string schema, string table, IReadOnlyList<string> keys, IReadOnlyList<IndexEvidence> evidence, string? predicate = null, IReadOnlyList<string>? includes = null)

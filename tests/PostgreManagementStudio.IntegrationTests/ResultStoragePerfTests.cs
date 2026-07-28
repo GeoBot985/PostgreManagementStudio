@@ -20,6 +20,14 @@ public sealed class ResultStoragePerfTests
     private static string? ConnectionString =>
         Environment.GetEnvironmentVariable("PMS_CONNECTION_STRING");
 
+    private static void RequirePerformanceEnvironment()
+    {
+        if (!PerfEnabled())
+            throw new InvalidOperationException("Performance test was executed without PMS_RUN_PERF=1.");
+        if (string.IsNullOrWhiteSpace(ConnectionString))
+            throw new InvalidOperationException("Performance test was executed without PMS_CONNECTION_STRING.");
+    }
+
     private static async Task<IResultSession> RunAsync(string sql)
     {
         var service = new ResultExecutionService(new NpgsqlQueryExecutor(), ResultStorageOptions.Default);
@@ -29,10 +37,10 @@ public sealed class ResultStoragePerfTests
     private static string FormatRow(IReadOnlyList<ResultCell> cells) =>
         string.Join(" | ", cells.Select(c => c.IsNull ? "NULL" : (c.Value?.ToString() ?? "")));
 
-    [Fact]
+    [PerformanceFact]
     public async Task FirstBatchReadableBeforeCompletion_100k()
     {
-        if (!PerfEnabled() || string.IsNullOrWhiteSpace(ConnectionString)) return;
+        RequirePerformanceEnvironment();
         // The builder consumes the executor's channel and only returns the session after
         // ExecutionCompleted. To assert first-batch-readability we run the executor directly and
         // observe the RowBatchReceived events while the builder is awaiting the full stream.
@@ -61,10 +69,10 @@ public sealed class ResultStoragePerfTests
         Assert.True(firstBatchAtMs < completionAtMs, $"first={firstBatchAtMs}ms, complete={completionAtMs}ms");
     }
 
-    [Fact]
+    [PerformanceFact]
     public async Task MemoryBounded_100kScalar()
     {
-        if (!PerfEnabled() || string.IsNullOrWhiteSpace(ConnectionString)) return;
+        RequirePerformanceEnvironment();
         var session = await RunAsync("SELECT generate_series(1, 100000) AS value;");
         Assert.Equal(100_000, session.ResultSets[0].LoadedRowCount);
         // Estimate each cell as BoxedIntBytes + row overhead. Should be comfortably below 100 MiB.
@@ -72,10 +80,10 @@ public sealed class ResultStoragePerfTests
             $"Estimated memory {session.EstimatedMemoryBytes} exceeds 100 MiB bound.");
     }
 
-    [Fact]
+    [PerformanceFact]
     public async Task LookupLatency_Sublinear_100k()
     {
-        if (!PerfEnabled() || string.IsNullOrWhiteSpace(ConnectionString)) return;
+        RequirePerformanceEnvironment();
         var session = await RunAsync("SELECT g AS id, md5(g::text) AS hash_value, repeat('x', 100) AS text_value FROM generate_series(1, 100000) AS g;");
         var store = session.ResultSets[0];
         Assert.Equal(100_000, store.LoadedRowCount);
@@ -96,24 +104,24 @@ public sealed class ResultStoragePerfTests
         Assert.True(avgUs < 200, $"Average lookup {avgUs:F1} µs exceeds 200 µs target.");
     }
 
-    [Fact]
+    [PerformanceFact]
     public async Task RangeRetrieval_100Rows_100k()
     {
-        if (!PerfEnabled() || string.IsNullOrWhiteSpace(ConnectionString)) return;
+        RequirePerformanceEnvironment();
         var session = await RunAsync("SELECT generate_series(1, 100000) AS value;");
         var store = session.ResultSets[0];
         var sw = Stopwatch.StartNew();
         var range = await store.GetRowsAsync(50_000, 100, CancellationToken.None);
         sw.Stop();
         Assert.Equal(100, range.Count);
-        Assert.Equal(50_001L, range[0].Cells[0].Value);
+        Assert.Equal(50_001, Assert.IsType<int>(range[0].Cells[0].Value));
         Assert.True(sw.ElapsedMilliseconds < 100, $"Range retrieval took {sw.ElapsedMilliseconds} ms (target < 100 ms).");
     }
 
-    [Fact]
+    [PerformanceFact]
     public async Task DisposalFast_100k()
     {
-        if (!PerfEnabled() || string.IsNullOrWhiteSpace(ConnectionString)) return;
+        RequirePerformanceEnvironment();
         var session = await RunAsync("SELECT generate_series(1, 100000) AS value;");
         var sw = Stopwatch.StartNew();
         await session.DisposeAsync();
@@ -122,10 +130,10 @@ public sealed class ResultStoragePerfTests
         Assert.True(sw.ElapsedMilliseconds < 1_000, $"Disposal took {sw.ElapsedMilliseconds} ms (target < 1 s).");
     }
 
-    [Fact]
+    [PerformanceFact]
     public async Task WritesReportSummary()
     {
-        if (!PerfEnabled() || string.IsNullOrWhiteSpace(ConnectionString)) return;
+        RequirePerformanceEnvironment();
         var report = new StringBuilder();
         report.AppendLine("Sprint 002 perf report");
         report.AppendLine($"Generated: {DateTimeOffset.UtcNow:O}");

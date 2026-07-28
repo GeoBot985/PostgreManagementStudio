@@ -20,6 +20,21 @@ public sealed class ResultSetStoreTruncationTests
     }
 
     [Fact]
+    public async Task RowLimitRetainsPrefixWhenFirstBatchCrossesLimit()
+    {
+        var session = new TestSession(new ResultStorageOptions(long.MaxValue, long.MaxValue, 3));
+        var store = session.CreateStore(0, QueryEventFactory.Schema(new[] { "v" }));
+        await session.Writer.AppendBatchAsync(
+            QueryEventFactory.Batch(0, Enumerable.Range(1, 5).Select(i => QueryEventFactory.Row(i)).ToArray()),
+            CancellationToken.None);
+
+        Assert.Equal(3, store.LoadedRowCount);
+        Assert.Equal(5, store.ReceivedRowCount);
+        Assert.True(store.WasTruncated);
+        Assert.Equal(3, (await store.GetRowAsync(2, CancellationToken.None)).Cells[0].Value);
+    }
+
+    [Fact]
     public async Task ResultSetMemoryLimitTriggersTruncation()
     {
         // Choose a tiny memory limit so any batch with strings triggers it.

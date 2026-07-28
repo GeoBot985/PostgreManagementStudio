@@ -208,9 +208,30 @@ internal sealed class ResultSetStore : IResultSetStore, IResultSetWriter
                 Volatile.Write(ref _status, (int)ResultSetStatus.Receiving);
             }
 
-            // Truncation checks: row limit, result-set memory limit.
-            if (Volatile.Read(ref _truncatedFlag) == 0 && TruncationShouldFire(batch))
+            // A row limit may fall inside a provider batch. Retain the prefix up
+            // to the exact limit instead of discarding the whole first batch.
+            var truncateAfterAppend = false;
+            var availableRows = _options.MaximumRowsPerResultSet - loaded;
+            if (batch.Rows.Count > availableRows)
             {
+                _truncationReason = ResultTruncationReason.MaximumRowsReached;
+                if (availableRows <= 0)
+                {
+                    MarkTruncated();
+                    return ValueTask.CompletedTask;
+                }
+
+                batch = new ResultRowBatch(
+                    batch.StartRowIndex,
+                    batch.Rows.Take(checked((int)availableRows)).ToArray());
+                truncateAfterAppend = true;
+            }
+
+            // Result-set memory remains batch-atomic: retaining a partial value
+            // batch could exceed the configured byte bound.
+            if (EstimatedMemoryBytes + ComputeBatchBytes(batch) > _options.MaximumResultSetMemoryBytes)
+            {
+                _truncationReason = ResultTruncationReason.ResultSetMemoryLimitReached;
                 MarkTruncated();
                 return ValueTask.CompletedTask;
             }
@@ -235,6 +256,7 @@ internal sealed class ResultSetStore : IResultSetStore, IResultSetWriter
 
             _logger?.LogTrace("Batch appended ({ResultSetIndex}, start {Start}, size {Size})",
                 ResultSetIndex, batch.StartRowIndex, batch.Rows.Count);
+            if (truncateAfterAppend) MarkTruncated();
         }
         return ValueTask.CompletedTask;
     }
@@ -310,23 +332,6 @@ internal sealed class ResultSetStore : IResultSetStore, IResultSetWriter
     // -----------------------------------------------------------------------
     // Internals
     // -----------------------------------------------------------------------
-
-    private bool TruncationShouldFire(ResultRowBatch batch)
-    {
-        var projectedRows = _index.LoadedRowCount + batch.Rows.Count;
-        if (projectedRows > _options.MaximumRowsPerResultSet)
-        {
-            _truncationReason = ResultTruncationReason.MaximumRowsReached;
-            return true;
-        }
-        var projectedMemory = EstimatedMemoryBytes + ComputeBatchBytes(batch);
-        if (projectedMemory > _options.MaximumResultSetMemoryBytes)
-        {
-            _truncationReason = ResultTruncationReason.ResultSetMemoryLimitReached;
-            return true;
-        }
-        return false;
-    }
 
     private void MarkTruncated()
     {

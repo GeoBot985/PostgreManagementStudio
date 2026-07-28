@@ -46,6 +46,7 @@ public sealed class ResultSessionBuilder : IResultSessionBuilder
                     case RowBatchReceived rb:
                     {
                         var writer = session.GetWriter(rb.ResultSetIndex);
+                        var memoryBefore = writer.EstimatedMemoryBytes;
                         await writer.AppendBatchAsync(rb.Batch, cancellationToken).ConfigureAwait(false);
                         // After a successful append, account session-level memory and trigger
                         // session-limit truncation if needed. The internal hook on the store
@@ -53,8 +54,9 @@ public sealed class ResultSessionBuilder : IResultSessionBuilder
                         if (rb.Batch.Rows.Count > 0 && writer is ResultSetStore concrete)
                         {
                             session.AddReceivedRows(rb.Batch.Rows.Count);
-                            // Compute batch bytes for session aggregate.
-                            var bytes = EstimateBatchBytesForSession(rb.Batch);
+                            // The store may retain only a prefix when the row
+                            // limit falls inside a provider batch.
+                            var bytes = Math.Max(0, writer.EstimatedMemoryBytes - memoryBefore);
                             session.OnBatchRetained(concrete, bytes);
                         }
                         else if (rb.Batch.Rows.Count > 0)
@@ -144,15 +146,4 @@ public sealed class ResultSessionBuilder : IResultSessionBuilder
         return session;
     }
 
-    private static long EstimateBatchBytesForSession(ResultRowBatch batch)
-    {
-        long bytes = ResultSizeEstimator.EstimateBatchOverheadBytes(batch.Rows.Count);
-        for (int i = 0; i < batch.Rows.Count; i++)
-        {
-            var row = batch.Rows[i];
-            bytes += ResultSizeEstimator.EstimateRowOverheadBytes(row);
-            for (int c = 0; c < row.Cells.Count; c++) bytes += ResultSizeEstimator.EstimateCellBytes(row.Cells[c]);
-        }
-        return bytes;
-    }
 }

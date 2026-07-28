@@ -1,23 +1,22 @@
 # PostgreManagementStudio
 
-Windows-only WPF PostgreSQL management application. Current milestone: Sprint 002
-result storage and virtualisation foundation.
-
-The Sprint 002 layer adds an in-memory, provider-neutral result-store that
-sits between the Sprint 001 async query pipeline and a future production
-result grid. It accepts streamed row batches, retains typed values, exposes
-random-access reads, preserves multiple result sets independently, and avoids
-creating UI objects for every cell.
+Windows-only WPF PostgreSQL management application. The project is in release
+hardening after Sprints 1-33. The service and domain layers cover query
+execution, result handling, administration, monitoring, schema comparison,
+performance analysis, and index analysis. The current desktop host exposes a
+smaller prototype subset; see
+`docs/hardening/034-feature-traceability.md` for the audited reachability status.
 
 ## Prerequisites
 
-Git, .NET SDK 9 (upgrade to current LTS when installed), Visual Studio with
-.NET desktop development, and PostgreSQL for Windows.
+Git, .NET SDK 9, VS Code (or another editor), and PostgreSQL for Windows.
+Visual Studio is optional; the .NET SDK contains the required build tools.
 
 ## Build and test
 
 ```powershell
 dotnet restore
+dotnet build --configuration Debug
 dotnet build --configuration Release
 dotnet test --configuration Release
 ```
@@ -45,3 +44,6 @@ dotnet run --project src/PostgreManagementStudio.Desktop --configuration Release
 ```
 
 Do not commit credentials.
+
+Integration tests requiring PostgreSQL are reported as skipped when
+`PMS_CONNECTION_STRING` is absent; they run normally when it is configured.

@@ -5,8 +5,10 @@ using PostgreManagementStudio.Core;
 
 namespace PostgreManagementStudio.Postgres;
 
-public sealed class NpgsqlQueryExecutor : IQueryExecutor
+public sealed class NpgsqlQueryExecutor(INpgsqlConnectionFactory? connectionFactory = null) : IQueryExecutor
 {
+    private readonly INpgsqlConnectionFactory _connections = connectionFactory ?? NpgsqlConnectionFactory.Shared;
+
     public async IAsyncEnumerable<QueryExecutionEvent> ExecuteAsync(QueryRequest request, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var channel = Channel.CreateUnbounded<QueryExecutionEvent>(new UnboundedChannelOptions { SingleWriter = true, SingleReader = true });
@@ -14,11 +16,11 @@ public sealed class NpgsqlQueryExecutor : IQueryExecutor
         await foreach (var item in channel.Reader.ReadAllAsync()) yield return item;
     }
 
-    private static async Task ProduceAsync(QueryRequest request, ChannelWriter<QueryExecutionEvent> writer, CancellationToken cancellationToken)
+    private async Task ProduceAsync(QueryRequest request, ChannelWriter<QueryExecutionEvent> writer, CancellationToken cancellationToken)
     {
         var started = DateTimeOffset.UtcNow; var notices = new ConcurrentQueue<PostgresNotice>();
         await writer.WriteAsync(new ExecutionStarted(started));
-        await using var connection = new NpgsqlConnection(request.ConnectionString);
+        await using var connection = _connections.Create(request.ConnectionString, "PostgreManagementStudio - Query");
         void NoticeHandler(object? _, NpgsqlNoticeEventArgs e) => notices.Enqueue(e.Notice);
         connection.Notice += NoticeHandler;
         try
