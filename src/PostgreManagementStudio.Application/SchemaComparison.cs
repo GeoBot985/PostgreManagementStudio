@@ -15,6 +15,40 @@ public sealed record SchemaComparisonResult(SchemaModel Source, SchemaModel Targ
 public sealed record SchemaDependency(string ObjectId, string DependsOnId);
 public sealed record SchemaSynchronisationStep(int Order, SchemaDifference Difference, string Sql, bool TransactionSafe, IReadOnlyList<string> Warnings);
 public sealed record SchemaSynchronisationPlan(IReadOnlyList<SchemaSynchronisationStep> Steps, int DestructiveCount, int ManualCount, bool IsSafeToExecute);
+public enum SchemaPreviewFilter { All, Additions, Modifications, Deletions, Warnings, Selected }
+public sealed record SchemaPreviewItem(SchemaDifference Difference, bool Included, bool IsBlocked, IReadOnlyList<string> Warnings);
+public sealed record SchemaSynchronisationPreview(IReadOnlyList<SchemaPreviewItem> Items, IReadOnlyList<SchemaSynchronisationStep> IncludedSteps, string Script, int AdditionCount, int ModificationCount, int DeletionCount, int WarningCount, bool IsPartial, bool HasBlockedChanges)
+{
+    public IReadOnlyList<SchemaPreviewItem> Filter(SchemaPreviewFilter filter) => filter switch
+    {
+        SchemaPreviewFilter.Additions => Items.Where(x => x.Difference.Kind == SchemaDifferenceKind.Added).ToArray(),
+        SchemaPreviewFilter.Modifications => Items.Where(x => x.Difference.Kind == SchemaDifferenceKind.Changed).ToArray(),
+        SchemaPreviewFilter.Deletions => Items.Where(x => x.Difference.Kind == SchemaDifferenceKind.Removed).ToArray(),
+        SchemaPreviewFilter.Warnings => Items.Where(x => x.Warnings.Count > 0 || x.IsBlocked).ToArray(),
+        SchemaPreviewFilter.Selected => Items.Where(x => x.Included).ToArray(),
+        _ => Items
+    };
+}
+public static class SchemaSynchronisationPreviewBuilder
+{
+    public static SchemaSynchronisationPreview Build(SchemaComparisonResult comparison, IReadOnlyList<SchemaDependency> dependencies, ISet<string>? excluded = null, bool includeDestructive = false)
+    {
+        excluded ??= new HashSet<string>(StringComparer.Ordinal);
+        var plan = SchemaSynchronisationPlanner.Plan(comparison, dependencies, includeDestructive);
+        var stepsById = plan.Steps.ToDictionary(x => (x.Difference.Source ?? x.Difference.Target)!.Id);
+        var items = comparison.Differences.Where(x => x.Action != SchemaAction.None).Select(d =>
+        {
+            var id = (d.Source ?? d.Target)!.Id;
+            var blocked = d.Action == SchemaAction.Manual || d.Kind is SchemaDifferenceKind.Unresolved or SchemaDifferenceKind.Unsupported;
+            var warnings = d.Risk is SchemaRisk.High or SchemaRisk.Destructive ? new[] { d.Reason, "Review this operation before applying it." } : blocked ? new[] { d.Reason } : Array.Empty<string>();
+            return new SchemaPreviewItem(d, !excluded.Contains(id) && !blocked && (includeDestructive || d.Risk != SchemaRisk.Destructive), blocked, warnings);
+        }).ToArray();
+        var included = plan.Steps.Where(s => items.Any(i => i.Included && ReferenceEquals(i.Difference, s.Difference))).ToArray();
+        var selectedPlan = plan with { Steps = included };
+        var script = SchemaScriptGenerator.Generate(comparison, selectedPlan);
+        return new(items, included, script, items.Count(x => x.Difference.Kind == SchemaDifferenceKind.Added), items.Count(x => x.Difference.Kind == SchemaDifferenceKind.Changed), items.Count(x => x.Difference.Kind == SchemaDifferenceKind.Removed), items.Count(x => x.Warnings.Count > 0 || x.IsBlocked), comparison.IsPartial, items.Any(x => x.IsBlocked));
+    }
+}
 public static class SchemaCanonicalizer { public static string Canonicalize(string definition) => string.Join(' ', definition.Replace("\r", " ").Replace("\n", " ").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)); }
 public static class SchemaComparisonService
 {
@@ -29,7 +63,7 @@ public static class SchemaSynchronisationPlanner
 }
 public static class SchemaScriptGenerator
 {
-    public static string Generate(SchemaComparisonResult comparison, SchemaSynchronisationPlan plan) { var b = new StringBuilder("-- PostgreManagementStudio Schema Synchronisation\n"); b.AppendLine($"-- Source: {comparison.Source.Server} / {comparison.Source.Database}"); b.AppendLine($"-- Target: {comparison.Target.Server} / {comparison.Target.Database}"); b.AppendLine($"-- Generated: {DateTimeOffset.UtcNow:O}"); foreach (var step in plan.Steps) { b.AppendLine(); b.AppendLine($"-- {step.Difference.Action} {step.Difference.Risk}: {(step.Difference.Source ?? step.Difference.Target)!.Kind} {(step.Difference.Source ?? step.Difference.Target)!.Schema}.{(step.Difference.Source ?? step.Difference.Target)!.Name}"); b.AppendLine(step.Sql); } return b.ToString(); }
+    public static string Generate(SchemaComparisonResult comparison, SchemaSynchronisationPlan plan) { var b = new StringBuilder("-- PostgreManagementStudio Schema Synchronisation\n"); b.AppendLine($"-- Source: {comparison.Source.Server} / {comparison.Source.Database}"); b.AppendLine($"-- Target: {comparison.Target.Server} / {comparison.Target.Database}"); b.AppendLine($"-- Generated: {DateTimeOffset.UtcNow:O}"); if (plan.Steps.Count > 0) b.AppendLine("\nBEGIN;"); foreach (var step in plan.Steps) { b.AppendLine(); b.AppendLine($"-- {step.Difference.Action} {step.Difference.Risk}: {(step.Difference.Source ?? step.Difference.Target)!.Kind} {(step.Difference.Source ?? step.Difference.Target)!.Schema}.{(step.Difference.Source ?? step.Difference.Target)!.Name}"); foreach (var warning in step.Warnings) b.AppendLine($"-- WARNING: {warning}"); b.AppendLine(step.Sql); } if (plan.Steps.Count > 0) b.AppendLine("\nCOMMIT;"); return b.ToString(); }
     public static string Statement(SchemaDifference difference) { var o = difference.Source ?? difference.Target!; var qualified = PostgreSqlIdentifierQuoter.Qualified(o.Schema, o.Name); return difference.Action switch { SchemaAction.Create => o.Definition.TrimEnd(';') + ";", SchemaAction.Alter => o.Definition.TrimEnd(';') + ";", SchemaAction.Drop => $"DROP {o.Kind.ToString().ToUpperInvariant()} {qualified};", _ => $"-- Manual action required for {qualified}" }; }
 }
 public static class SchemaSnapshotService { public static string Serialize(SchemaModel model) => JsonSerializer.Serialize(model, new JsonSerializerOptions { WriteIndented = true }); public static SchemaModel Deserialize(string json) => JsonSerializer.Deserialize<SchemaModel>(json) ?? throw new InvalidDataException("Invalid schema snapshot."); }
