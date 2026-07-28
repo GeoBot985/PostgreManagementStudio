@@ -32,3 +32,4 @@
 | Sprint 028 | Query Performance History and Local Baselines | Complete with documented storage and UI limitations |
 | Sprint 029 | Live Session Monitor and Query Activity Management | Complete with documented UI and storage limitations |
 | Sprint 030 | PostgreSQL Activity Monitor | Complete with documented UI and persistence limitations |
+| Sprint 031 | Query Performance Dashboard | Complete with documented UI and collector limitations |
