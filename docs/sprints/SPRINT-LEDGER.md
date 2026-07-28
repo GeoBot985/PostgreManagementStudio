@@ -27,3 +27,4 @@
 | Sprint 023 | Query Performance Store and pg_stat_statements Analysis | Complete with documented UI and collector limitations |
 | Sprint 024 | Execution Plan Analysis and Visualisation | Complete with documented UI and integration limitations |
 | Sprint 025 | Index Analysis and Recommendation Workspace | Complete with documented UI and collector limitations |
+| Sprint 026 | Query Plan Explorer and Performance Diagnostics | Complete with documented UI and integration limitations |
