@@ -37,6 +37,11 @@ diagnostics, and privacy rules are documented in
 `docs/hardening/036-execution-contract.md`. Sprint 36 evidence is recorded in
 `docs/hardening/036-completion-report.md`.
 
+Connection configuration, lifecycle, credentials, pooling, session reset, and
+reconnect rules are documented in
+`docs/hardening/037-connection-contract.md`. Sprint 37 evidence is recorded in
+`docs/hardening/037-completion-report.md`.
+
 To run the gated perf suite:
 
 ```powershell

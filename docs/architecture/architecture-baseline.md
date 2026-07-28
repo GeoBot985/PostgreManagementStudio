@@ -111,3 +111,13 @@ dedicated Sprint 38 review before release.
   reachability and manual verification are separate acceptance evidence.
 - From Sprint 34 onward, no user-facing feature is added except to complete an
   approved feature or fix correctness, safety, compatibility, or testability.
+
+## Sprint 37 connection boundary
+
+All production Npgsql construction is owned by `INpgsqlConnectionFactory` and
+passes through an immutable `EffectiveConnectionConfiguration`. Connection
+tests derive from the same profile/configuration model. Profile changes create
+new identities and invalidate only the affected old pool. Provider reset cannot
+be disabled, pool sizes are bounded, lifecycle attempts are correlated and
+stale-safe, and diagnostics exclude connection strings and credentials. See
+`docs/hardening/037-connection-contract.md`.

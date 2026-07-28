@@ -14,6 +14,10 @@ public static class ProductionServices
         var settings = (applicationSettings ?? new ApplicationSettings()).Validate();
         var services = new ServiceCollection();
         services.AddSingleton<INpgsqlConnectionFactory>(NpgsqlConnectionFactory.Shared);
+        services.AddSingleton<IConnectionDiagnostics, DiagnosticConnectionDiagnostics>();
+        services.AddSingleton<IConnectionProbe, NpgsqlConnectionProbe>();
+        services.AddSingleton<IConnectionPoolInvalidator, NpgsqlConnectionPoolInvalidator>();
+        services.AddSingleton<ConnectionProfileRegistry>();
         services.AddSingleton<IQueryExecutor>(sp => new NpgsqlQueryExecutor(sp.GetRequiredService<INpgsqlConnectionFactory>()));
         services.AddSingleton<IPostgresVersionQuery>(sp => new NpgsqlPostgresVersionQuery(sp.GetRequiredService<INpgsqlConnectionFactory>()));
         services.AddSingleton<IPostgresMetadataProvider>(sp => new NpgsqlMetadataProvider(sp.GetRequiredService<INpgsqlConnectionFactory>()));

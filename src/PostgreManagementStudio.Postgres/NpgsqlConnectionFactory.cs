@@ -9,6 +9,8 @@ namespace PostgreManagementStudio.Postgres;
 public interface INpgsqlConnectionFactory
 {
     NpgsqlConnection Create(string connectionString, string applicationName);
+    NpgsqlConnection Create(EffectiveConnectionConfiguration configuration);
+    void ClearPool(EffectiveConnectionConfiguration configuration);
 }
 
 public sealed class NpgsqlConnectionFactory : INpgsqlConnectionFactory
@@ -19,12 +21,22 @@ public sealed class NpgsqlConnectionFactory : INpgsqlConnectionFactory
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
         ArgumentException.ThrowIfNullOrWhiteSpace(applicationName);
+        var configuration = EffectiveConnectionConfigurationBuilder.FromConnectionString(
+            $"raw:{applicationName}",
+            connectionString,
+            applicationName);
+        return Create(configuration);
+    }
 
-        var builder = new NpgsqlConnectionStringBuilder(connectionString)
-        {
-            ApplicationName = applicationName,
-        };
+    public NpgsqlConnection Create(EffectiveConnectionConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+        return new NpgsqlConnection(configuration.ProviderConnectionString);
+    }
 
-        return new NpgsqlConnection(builder.ConnectionString);
+    public void ClearPool(EffectiveConnectionConfiguration configuration)
+    {
+        using var connection = Create(configuration);
+        NpgsqlConnection.ClearPool(connection);
     }
 }

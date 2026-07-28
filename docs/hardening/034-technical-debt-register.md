@@ -61,3 +61,16 @@ New evidence-based blockers:
 - `TD-035-003` is resolved for the SQL editor: backend termination, missing
   databases, timeout, invalid profiles, pool discard, controlled recovery, and
   no automatic replay are automated.
+
+## Sprint 37 updates
+
+- `TD-035-003` is fully resolved at the reusable connection boundary through
+  an explicit attempt-correlated lifecycle, stale-result rejection, safe
+  reconnect policy, backend-death recovery, and structured diagnostics.
+- Connection creation now has one effective configuration and validation path,
+  with targeted pool invalidation and immutable profile snapshots.
+- Credential persistence remains intentionally absent. A future saved-profile
+  feature must provide OS-backed secure storage and must never fall back to
+  plaintext.
+- Physical server restart, certificate rotation, and GSS/LDAP/SSPI validation
+  remain deployment compatibility campaigns, not code-release blockers.

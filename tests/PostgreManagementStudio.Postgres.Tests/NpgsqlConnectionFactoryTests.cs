@@ -42,5 +42,8 @@ public sealed class NpgsqlConnectionFactoryTests
     {
         public NpgsqlConnection Create(string connectionString, string applicationName)
             => throw new ArgumentException($"bad {connectionString}");
+        public NpgsqlConnection Create(EffectiveConnectionConfiguration configuration)
+            => throw new ArgumentException($"bad {configuration.Profile.Id}");
+        public void ClearPool(EffectiveConnectionConfiguration configuration) { }
     }
 }
