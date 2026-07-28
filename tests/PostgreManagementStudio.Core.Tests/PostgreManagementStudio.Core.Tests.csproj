@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\PostgreManagementStudio.Core\PostgreManagementStudio.Core.csproj" />
+    <ProjectReference Include="..\..\src\PostgreManagementStudio.Application\PostgreManagementStudio.Application.csproj" />
   </ItemGroup>
 
 </Project>
