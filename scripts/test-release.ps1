@@ -174,7 +174,11 @@ finally {
         $counters = $result.TestRun.ResultSummary.Counters
         $passed += [int]$counters.passed
         $failed += [int]$counters.failed
-        $skipped += [int]$counters.notExecuted
+        # xUnit records skipped tests as individual NotExecuted results while
+        # leaving the aggregate TRX notExecuted counter at zero. Count the
+        # result records so the release summary cannot understate skipped
+        # coverage.
+        $skipped += @($result.TestRun.Results.UnitTestResult | Where-Object { $_.outcome -eq 'NotExecuted' }).Count
     }
     $coverageLines = @{}
     foreach ($coverageFile in Get-ChildItem $resultsDirectory -Recurse -Filter coverage.cobertura.xml -ErrorAction SilentlyContinue) {
