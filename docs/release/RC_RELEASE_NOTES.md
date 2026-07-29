@@ -4,7 +4,7 @@
 
 - Windows 11 x64 self-contained offline ZIP.
 - Package: `PostgreManagementStudio-0.9.0-rc.3-win-x64.zip`.
-- Sprint 56 qualification hash: `22fa5b41a1952d90d5514d95efcc95b1b657169d378d6bf083f7ae4dc58b19ad`.
+- Final Sprint 57 frozen hash: `e6244a56b6a654123cd3ae7a7318e2bc28e978b35981b709f0149a564d8829aa`.
 - Npgsql: 8.0.6. PostgreSQL support claim: 18.4 only.
 - Package is unsigned internal-candidate material; signing and malware scan are
   required before distribution.
@@ -31,6 +31,8 @@ are redacted/bounded; query text is omitted from activity snapshots by default.
 
 ## Qualification status
 
-Package verification and isolated install/repair/uninstall preservation passed.
-Public release remains blocked pending clean-machine/display, upgrade,
-multi-version PostgreSQL, signing/malware and licence/attribution qualification.
+Package verification, packaged-shell launch, isolated install/repair/uninstall
+preservation, prior-package installer upgrade, and a 393-pass PostgreSQL 18.4
+campaign passed. This is approved only as an internal RC. Public release remains
+blocked pending clean-machine/display, stateful upgrade, signing/malware and
+licence/attribution qualification.

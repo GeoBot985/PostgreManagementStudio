@@ -59,3 +59,11 @@ query history, query-performance, or database-performance capabilities.
 No feature receives `RELEASE_QUALITY`. The current release is a compact SQL
 editor/query tool with a limited set of connected database actions, not a full
 PostgreSQL administration suite.
+
+## Sprint 57 frozen-candidate reconciliation
+
+The frozen candidate does not change the classifications or counts above.
+`FINAL_FEATURE_ACCEPTANCE_MATRIX.md` includes only END_TO_END_REACHABLE
+workflows in the release scope; SERVICE_ONLY, DIAGNOSTIC_OR_TEMPORARY_UI and
+PARTIALLY_REACHABLE areas remain deferred or removed. No desktop UI feature is
+promoted to RELEASE_QUALITY without human clean-environment evidence.

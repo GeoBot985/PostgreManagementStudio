@@ -25,3 +25,10 @@ Cold/warm startup timing, private bytes/handles, extended monitoring duration,
 large-schema expansion, million-row transfer, multi-DPI rendering and
 connection-pool pressure require the isolated PostgreSQL and clean Windows
 campaigns. They remain qualification work, not implied passes.
+
+## Sprint 57 update
+
+The final large-dataset PostgreSQL 18.4 suite completed with 393 passed, 0
+failed and 0 skipped, including 100k-row and large-schema checks. Build time was
+3.83 seconds after warm restore and the integration suite took 32 seconds. No
+long-duration desktop telemetry or display campaign was run.

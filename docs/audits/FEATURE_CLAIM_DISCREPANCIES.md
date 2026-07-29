@@ -58,6 +58,14 @@ close commands use consistent terminology. The shell still does not claim a
 settings editor, query history browser, query-performance adapter, or
 database-performance workspace merely because supporting services exist.
 
+## Sprint 57 final reconciliation
+
+The frozen internal RC claims only the workflows classified END_TO_END_REACHABLE
+in `UI_REACHABILITY_MATRIX.md`; it does not claim settings, history,
+query/database statistics, roles, data editing, PostgreSQL-to-PostgreSQL
+transfer or synchronisation execution. Package and integration evidence supports
+the narrow claim but does not upgrade any UI classification to RELEASE_QUALITY.
+
 The current source-of-truth description is the reachability matrix plus the
 release-scope reset. Future sprint reports may retain historical status, but
 must use “service-only”, “temporary UI”, “partial”, “end-to-end reachable”, or

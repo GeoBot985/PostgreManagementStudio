@@ -37,6 +37,24 @@ clean-machine Windows, broader PostgreSQL compatibility, signing/malware and
 licence gates prevent an overall release-candidate pass. These are explicit
 qualification gates, not hidden as passing tests.
 
+## Sprint 57 reconciliation
+
+| Dimension | Sprint 56 result | Sprint 57 action | Final result | Evidence |
+|---|---|---|---|---|
+| Functional completeness | Conditional | Scope matrix reconciled | Conditional pass | `FINAL_FEATURE_ACCEPTANCE_MATRIX.md` |
+| Reliability | Conditional | 393-test PostgreSQL 18.4 run | Conditional pass | `SPRINT_57_REPORT.md` |
+| Data/credential safety | Pass | Rechecked destructive/privacy paths | Pass in supported scope | Final safety/security reviews |
+| Responsiveness/resources | Conditional | Large-dataset tests completed | Conditional pass | `FINAL_PERFORMANCE_AND_STABILITY.md` |
+| Installation | Conditional | Package launch and lifecycle rerun | Conditional pass | `FINAL_PACKAGE_VALIDATION.md` |
+| Upgrade | Not tested | Prior-package installer upgrade | Conditional pass | Final package validation |
+| Compatibility | Conditional | PostgreSQL 18.4 rerun | Pass for 18.4 only | compatibility matrix |
+| Recovery/startup | Pass | Packaged launch/exit rechecked | Pass | package validation |
+| Documentation/tests | Conditional | Final reconciliation; skipped-count fix | Conditional pass | final state/report |
+
+The final outcome is `APPROVE_WITH_DOCUMENTED_CONDITIONS` for an internal RC;
+clean Windows/DPI, stateful upgrade, signing/scanning/licence and any broader
+compatibility claims remain public-release conditions.
+
 ## Recommended Sprint 57
 
 Run the external qualification campaign: clean Windows installation and

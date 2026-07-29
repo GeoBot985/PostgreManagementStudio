@@ -12,3 +12,4 @@
 | PostgreSQL transfer | No PostgreSQL-to-PostgreSQL migration workflow | Use file transfer or external PostgreSQL tools | Deferred | No |
 | Backup tools | Backup/restore needs compatible `pg_dump`, `pg_restore`, and `psql` | Install/configure tools on the target machine | Supported prerequisite | No |
 | Remote security | TLS/client-certificate/SSPI matrix is not qualified | Limit internal testing to documented connection modes | Qualification gate | Yes for public broad claim |
+| Stateful upgrade | A prior-package installer upgrade passed, but real old settings/profile/credential and interrupted-migration recovery is not fully exercised | Preserve user state and run the documented upgrade campaign before public release | Qualification gate | Yes |

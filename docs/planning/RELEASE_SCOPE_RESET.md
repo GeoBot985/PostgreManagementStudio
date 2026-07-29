@@ -40,3 +40,9 @@ blocking/lock diagnostics with privacy-aware activity snapshots. It should not
 advertise a full administration suite, query-performance/database-statistics
 dashboards, role management, automatic schema synchronisation, automatic index
 recommendations, or visual plan analysis.
+
+## Sprint 57 decision
+
+This scope is approved only for the frozen internal RC identified in
+`docs/release/FINAL_RC_CANDIDATE.md`. It remains unchanged pending clean-Windows
+and stateful-upgrade qualification; no deferred feature is restored to scope.

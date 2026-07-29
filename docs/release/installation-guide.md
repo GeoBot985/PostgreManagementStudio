@@ -6,6 +6,12 @@ Its recorded SHA-256 is
 This is an unsigned internal candidate pending clean-machine, upgrade,
 compatibility, signing, malware-scan, and licence gates.
 
+The final Sprint 57 candidate hash supersedes the Sprint 56 hash:
+`e6244a56b6a654123cd3ae7a7318e2bc28e978b35981b709f0149a564d8829aa`.
+It has passed package, launch, installer lifecycle and prior-package installer
+upgrade checks, but should remain internal until the conditions in
+`FINAL_RELEASE_DECISION.md` are closed.
+
 ## Requirements
 
 - Windows 11 x64 for the currently qualified environment.

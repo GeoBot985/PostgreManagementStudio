@@ -24,3 +24,12 @@ optional state is backed up and replaced with validated defaults. No migration
 copies passwords into ordinary JSON. A rollback of an upgrade is to close the
 application, restore the prior package, and preserve the external user-data
 directory; destructive operations are never resumed automatically.
+
+## Sprint 57 update
+
+The prior Sprint 56 ZIP was installed into an isolated root and the frozen
+Sprint 57 package installed over it successfully; its executable remained
+present and normal installer lifecycle evidence still passed. This establishes
+installer replacement compatibility, not a blanket claim that arbitrary legacy
+settings/profile/credential state has been migrated. That stateful campaign and
+interrupted-migration recovery remain public-release conditions.

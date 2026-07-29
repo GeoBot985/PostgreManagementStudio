@@ -25,3 +25,10 @@ Pass/Fail/Blocked and attach the package hash.
     state only; no destructive operation resumes.
 17. Run `install.ps1 -Repair`, then `uninstall.ps1`; verify application files
     are removed and user-state policy is honoured.
+
+## Sprint 57 execution record
+
+Steps 1, 2 (launch), and 17 passed against the frozen package. Connected
+workflow evidence was rerun through the disposable PostgreSQL 18.4 regression
+suite (393 pass / 0 fail / 0 skip). A clean-machine, fully authenticated manual
+UI pass was not available; it remains a release condition rather than a pass.

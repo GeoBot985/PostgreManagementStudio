@@ -89,3 +89,7 @@ Install, repair, upgrade, and removal instructions are in
 `docs/release/RC_EXIT_REVIEW.md`. It is not a public-release approval: clean
 machine, upgrade, broader PostgreSQL compatibility, signing, malware-scan, and
 licence gates remain open.
+
+Sprint 57 froze the internal candidate at package SHA-256
+`e6244a56b6a654123cd3ae7a7318e2bc28e978b35981b709f0149a564d8829aa`.
+Its explicit decision and conditions are in `docs/release/FINAL_RELEASE_DECISION.md`.

@@ -108,3 +108,12 @@ finish one usable surface rather than expose another collection of buttons.
   upgrade, PostgreSQL 14–17 matrix, signing/malware scan, and licence approval.
 - Sprint 57 recommendation: close those release gates before expanding the
   desktop feature surface.
+
+## Sprint 57 — final validation
+
+- Final decision: internal RC approved with documented conditions; see
+  `docs/release/FINAL_RELEASE_DECISION.md`.
+- No composition work was added and no deferred workflow was promoted.
+- Before any new feature sprint, complete signing/scanning/licensing, clean
+  Windows/DPI acceptance, stateful upgrade recovery, and any desired PostgreSQL
+  compatibility expansion.

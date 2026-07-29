@@ -32,3 +32,12 @@ Supported claims are deliberately limited to Windows 11 x64 and PostgreSQL
 | Compatibility | PostgreSQL 18.4 | Disposable environment required | Integration | Supported matrix passes | Pass in prior qualification | Sprint 47 evidence |
 | Windows | 100/125/150% DPI, multi-monitor, standard user | Clean machines required | Manual | No clipping/off-screen state | Not tested | RC-002 |
 | Security | Package/log/snapshot credential scan | Package and tests | Security/packaging | No secrets or dev strings | Pass | `verify-package.ps1`, security tests |
+
+## Sprint 57 final run
+
+The frozen package was rebuilt from `21e3ab2...`, verified at 407 archive files,
+and passed install/repair/uninstall preservation plus packaged desktop launch.
+The isolated PostgreSQL 18.4 large-dataset run passed 393 tests with 0 failures
+and 0 skips. The remaining manual clean Windows/DPI, stateful old-profile
+upgrade, signing/scanning, and unqualified-version rows remain conditions;
+they are not promoted to pass.

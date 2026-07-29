@@ -23,3 +23,10 @@ Password persistence is off unless the user selects both **Save connection profi
 ## Platform limitation
 
 The implementation is Windows-specific because this is a Windows WPF application. Credential Manager encrypts stored credentials for the Windows security context. It does not protect against malware, a debugger, or another process already executing with the same user's authority. Database-side least privilege, workstation protection, and credential rotation remain necessary.
+
+## Sprint 57 release qualification
+
+The frozen package and PostgreSQL 18.4 regression campaign showed no credential
+or connection-string exposure in package contents, diagnostic paths or failure
+handling. Remote TLS/client-certificate/SSPI configurations are not qualified
+release modes and must not be implied by the local PostgreSQL 18.4 claim.
