@@ -1,5 +1,6 @@
 using System.Text;
 using System.ComponentModel;
+using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -17,6 +18,12 @@ public partial class QueryTabView : UserControl
     private readonly DestructiveOperationGuard _destructiveOperations;
     private readonly ApplicationSettings _settings;
     private readonly IPerformanceDiagnostics _performanceDiagnostics;
+    private readonly IEditorObjectResolver _editorObjectResolver;
+    private readonly ObjectDescriptionService _objectDescriptions;
+    private readonly ObservableCollection<DescriptionColumnRow> _descriptionRows = [];
+    private CancellationTokenSource? _descriptionCancellation;
+    private ObjectDescription? _description;
+    private EditorObjectReference? _descriptionReference;
     private readonly ResultDisplayPageService _resultPages = new();
     private readonly LatestRequestCoordinator<IReadOnlyList<CompletionItem>> _completionRequests = new();
     private readonly LatestRequestCoordinator<ObjectSearchBatch> _searchRequests = new();
@@ -59,7 +66,9 @@ public partial class QueryTabView : UserControl
         NpgsqlDataTransferService dataTransfer,
         IResultExportService resultExport,
         TransferHistoryService transferHistory,
-        IPerformanceDiagnostics performanceDiagnostics)
+        IPerformanceDiagnostics performanceDiagnostics,
+        IEditorObjectResolver editorObjectResolver,
+        ObjectDescriptionService objectDescriptions)
     {
         InitializeComponent();
         _document = document;
@@ -76,6 +85,8 @@ public partial class QueryTabView : UserControl
         _resultExport = resultExport;
         _transferHistory = transferHistory;
         _performanceDiagnostics = performanceDiagnostics;
+        _editorObjectResolver = editorObjectResolver;
+        _objectDescriptions = objectDescriptions;
         _document.ExecutionStateChanged += Document_ExecutionStateChanged;
         Unloaded += QueryTabView_Unloaded;
         SqlText.Text = document.SqlText;
@@ -102,6 +113,8 @@ public partial class QueryTabView : UserControl
         {
             _resultPageCancellation?.Cancel();
             _resultPageCancellation?.Dispose();
+            _descriptionCancellation?.Cancel();
+            _descriptionCancellation?.Dispose();
             await DisposeResultTabStatesAsync();
             await _completionRequests.DisposeAsync();
             await _searchRequests.DisposeAsync();
@@ -306,6 +319,327 @@ public partial class QueryTabView : UserControl
         }
         catch (Exception ex) { StatusText.Text = "Error"; MessagesText.Text = SecretRedactor.Redact(ex.Message); }
         finally { UpdateCommandState(); DirtyChanged?.Invoke(this, EventArgs.Empty); }
+    }
+
+    public async Task DescribeObjectAsync()
+    {
+        var reference = _editorObjectResolver.Resolve(
+            SqlText.Text, SqlText.CaretIndex, SqlText.SelectionStart, SqlText.SelectionLength);
+        if (reference is null)
+        {
+            ShowDescriptionMessage("Place the caret on, or select, a PostgreSQL object name.");
+            return;
+        }
+        _descriptionReference = reference;
+        OutputTabs.SelectedItem = DescriptionTab;
+        DescriptionSummary.Text = $"Resolving {reference.DisplayText}…";
+        WorkspaceStateChanged?.Invoke(this, EventArgs.Empty);
+        if (!IsRecoveryConnected)
+        {
+            ShowDescriptionMessage(
+                $"Selected: {reference.DisplayText}. Live metadata requires a connected query editor; reconnect and retry Alt+F1.");
+            return;
+        }
+        if (reference.IsEditorLocal)
+        {
+            ShowDescriptionMessage(
+                $"{reference.DisplayText} is an editor-local CTE. Persistent catalogue metadata is not available.");
+            return;
+        }
+
+        _descriptionCancellation?.Cancel();
+        _descriptionCancellation?.Dispose();
+        _descriptionCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            _connection?.Session.GenerationToken ?? CancellationToken.None);
+        try
+        {
+            var candidates = await _objectDescriptions.ResolveAsync(
+                CurrentConnectionString(), DatabaseText.Text, reference, _descriptionCancellation.Token);
+            if (candidates.Count == 0)
+            {
+                ShowDescriptionMessage(
+                    $"{reference.DisplayText} was not found in the active database or search path. It may have been renamed or dropped.");
+                return;
+            }
+            var candidate = SelectCandidate(candidates, reference.DisplayText);
+            if (candidate is null)
+            {
+                SqlText.Focus();
+                return;
+            }
+            DescriptionSummary.Text = $"Loading {candidate.QualifiedName}…";
+            var targetColumn = reference.MemberName
+                ?? (reference.NameParts.Count >= 3 ? reference.NameParts[^1] : null);
+            var description = await _objectDescriptions.LoadAsync(
+                CurrentConnectionString(), DatabaseText.Text, candidate, targetColumn,
+                _descriptionCancellation.Token);
+            PresentDescription(description);
+            try
+            {
+                var secondary = await _objectDescriptions.LoadSecondaryAsync(
+                    CurrentConnectionString(), DatabaseText.Text, candidate,
+                    _descriptionCancellation.Token);
+                if (_description?.Candidate.Identity.Equals(candidate.Identity) == true)
+                    PresentSecondaryDetails(secondary);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                DescriptionSummary.Text += $" · secondary details unavailable: {SecretRedactor.Redact(ex.Message)}";
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            ShowDescriptionMessage($"Description cancelled for {reference.DisplayText}.");
+        }
+        catch (Exception ex)
+        {
+            ShowDescriptionMessage(SecretRedactor.Redact(ex.Message));
+        }
+    }
+
+    private ObjectDescriptionCandidate? SelectCandidate(
+        IReadOnlyList<ObjectDescriptionCandidate> candidates, string target)
+    {
+        if (candidates.Count == 1) return candidates[0];
+        var visible = candidates.Where(candidate => candidate.IsVisible).ToArray();
+        if (visible.Length == 1) return visible[0];
+        var dialog = new DescriptionCandidateDialog(target, visible.Length > 1 ? visible : candidates)
+        {
+            Owner = Window.GetWindow(this),
+        };
+        return dialog.ShowDialog() == true ? dialog.SelectedCandidate : null;
+    }
+
+    private void PresentDescription(ObjectDescription description)
+    {
+        _description = description;
+        _descriptionRows.Clear();
+        foreach (var column in description.Columns.OrderBy(column => column.Ordinal))
+            _descriptionRows.Add(new(column));
+        DescriptionColumns.ItemsSource = _descriptionRows;
+        DescriptionPreset.SelectedIndex = 0;
+        DescriptionFilter.Clear();
+        var size = description.SizeBytes is null ? string.Empty : $" · {FormatBytes(description.SizeBytes.Value)}";
+        var rows = description.EstimatedRows is null ? string.Empty : $" · ~{description.EstimatedRows:N0} rows";
+        var target = description.TargetColumn is null ? string.Empty : $" · column {description.TargetColumn}";
+        DescriptionSummary.Text =
+            $"{description.Candidate.QualifiedName} · {description.Candidate.ObjectType} · owner {description.Candidate.Owner} · {description.Persistence}{rows}{size}{target}";
+        DescriptionText.Text = BuildPlainText(description);
+        DescriptionDefinition.Text = description.Definition ?? description.DetailsText;
+        DescriptionModes.SelectedIndex = description.Columns.Count > 0 ? 0 : 1;
+        OutputTabs.SelectedItem = DescriptionTab;
+        if (description.TargetColumn is not null)
+        {
+            var row = _descriptionRows.FirstOrDefault(item =>
+                item.Name.Equals(description.TargetColumn, StringComparison.Ordinal));
+            if (row is not null)
+            {
+                DescriptionColumns.SelectedItem = row;
+                DescriptionColumns.ScrollIntoView(row);
+            }
+        }
+        WorkspaceStateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void PresentSecondaryDetails(ObjectDescriptionSecondaryDetails secondary)
+    {
+        if (_description is null) return;
+        _description = _description with
+        {
+            SizeBytes = secondary.SizeBytes,
+            DetailsText = secondary.DetailsText,
+        };
+        var size = secondary.SizeBytes is null
+            ? string.Empty : $" · {FormatBytes(secondary.SizeBytes.Value)}";
+        if (!string.IsNullOrEmpty(size) && !DescriptionSummary.Text.Contains(size, StringComparison.Ordinal))
+            DescriptionSummary.Text += size;
+        DescriptionText.Text = BuildPlainText(_description);
+        if (_description.Definition is null)
+            DescriptionDefinition.Text = secondary.DetailsText;
+    }
+
+    private void ShowDescriptionMessage(string message)
+    {
+        _description = null;
+        _descriptionRows.Clear();
+        DescriptionColumns.ItemsSource = _descriptionRows;
+        DescriptionSummary.Text = message;
+        DescriptionText.Text = message;
+        DescriptionDefinition.Clear();
+        DescriptionModes.SelectedIndex = 1;
+        OutputTabs.SelectedItem = DescriptionTab;
+        WorkspaceStateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private static string BuildPlainText(ObjectDescription description)
+    {
+        var text = new StringBuilder()
+            .AppendLine($"Object: {description.Candidate.QualifiedName}")
+            .AppendLine($"Type: {description.Candidate.ObjectType}")
+            .AppendLine($"Owner: {description.Candidate.Owner}")
+            .AppendLine($"Persistence: {description.Persistence}");
+        if (!string.IsNullOrWhiteSpace(description.Comment))
+            text.AppendLine($"Comment: {description.Comment}");
+        if (description.Columns.Count > 0)
+        {
+            text.AppendLine().AppendLine("Columns").AppendLine("-------");
+            foreach (var column in description.Columns.OrderBy(column => column.Ordinal))
+            {
+                var keys = string.Join(" ", new[]
+                {
+                    column.IsPrimaryKey ? "PK" : null,
+                    column.IsForeignKey ? "FK" : null,
+                    column.IsUnique ? "UQ" : null,
+                }.Where(value => value is not null));
+                var generated = column.GeneratedExpression is null
+                    ? string.Empty : $" generated {column.GeneratedExpression}";
+                var identity = string.IsNullOrWhiteSpace(column.IdentityMode)
+                    ? string.Empty : $" identity {column.IdentityMode}";
+                var defaultText = column.DefaultExpression is null
+                    ? string.Empty : $" default {column.DefaultExpression}";
+                text.Append(column.Ordinal.ToString().PadLeft(3)).Append("  ")
+                    .Append(column.Name.PadRight(24)).Append(' ')
+                    .Append(column.DataType.PadRight(30)).Append(' ')
+                    .Append(column.IsNullable ? "NULL     " : "NOT NULL ")
+                    .Append(keys).Append(defaultText).Append(identity).Append(generated).AppendLine();
+            }
+        }
+        if (!string.IsNullOrWhiteSpace(description.DetailsText))
+            text.AppendLine().AppendLine("Details").AppendLine("-------").AppendLine(description.DetailsText);
+        return text.ToString();
+    }
+
+    private void DescriptionPreset_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_descriptionRows.Count == 0 || DescriptionPreset.SelectedIndex < 0) return;
+        var preset = (ColumnListPreset)DescriptionPreset.SelectedIndex;
+        var selected = RelationColumnListService.ApplyPreset(
+            _descriptionRows.Select(row => row.Column), preset);
+        foreach (var row in _descriptionRows) row.IsIncluded = selected.Contains(row.Ordinal);
+        DescriptionColumns.Items.Refresh();
+    }
+
+    private void DescriptionSelectAll_Click(object sender, RoutedEventArgs e) =>
+        SetDescriptionInclusion(_ => true);
+    private void DescriptionClear_Click(object sender, RoutedEventArgs e) =>
+        SetDescriptionInclusion(_ => false);
+    private void DescriptionInvert_Click(object sender, RoutedEventArgs e) =>
+        SetDescriptionInclusion(row => !row.IsIncluded);
+
+    private void SetDescriptionInclusion(Func<DescriptionColumnRow, bool> selector)
+    {
+        foreach (var row in _descriptionRows) row.IsIncluded = selector(row);
+        DescriptionColumns.Items.Refresh();
+    }
+
+    private void DescriptionFilter_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (DescriptionColumns is null) return;
+        var filter = DescriptionFilter.Text.Trim();
+        DescriptionColumns.ItemsSource = string.IsNullOrWhiteSpace(filter)
+            ? _descriptionRows
+            : _descriptionRows.Where(row =>
+                row.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToArray();
+    }
+
+    private void DescriptionCopy_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Clipboard.SetText(SelectedColumnList());
+            DescriptionSummary.Text = $"{_description?.Candidate.QualifiedName} · column list copied.";
+        }
+        catch (Exception ex) { ShowDescriptionMessage(SecretRedactor.Redact(ex.Message)); }
+    }
+
+    private void DescriptionInsert_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var edit = ColumnListInsertionService.Insert(
+                SqlText.Text, SqlText.SelectionStart, SqlText.SelectionLength,
+                SqlText.CaretIndex, SelectedColumnList());
+            ApplyEditorEdit(edit);
+        }
+        catch (Exception ex) { ShowDescriptionMessage(SecretRedactor.Redact(ex.Message)); }
+    }
+
+    private void DescriptionReplaceWildcard_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var qualified = _descriptionReference?.RelationAlias is not null;
+            var format = qualified ? ColumnListFormat.QualifiedSelectList : ColumnListFormat.SelectList;
+            var formatted = FormatSelected(format);
+            var edit = ColumnListInsertionService.ReplaceWildcard(
+                SqlText.Text, SqlText.CaretIndex, formatted, _descriptionReference?.RelationAlias);
+            ApplyEditorEdit(edit);
+        }
+        catch (Exception ex) { ShowDescriptionMessage(SecretRedactor.Redact(ex.Message)); }
+    }
+
+    private string SelectedColumnList()
+    {
+        if (_description is null || _descriptionRows.All(row => !row.IsIncluded))
+            throw new InvalidOperationException("Select at least one described column.");
+        return FormatSelected((ColumnListFormat)Math.Max(0, DescriptionFormat.SelectedIndex));
+    }
+
+    private string FormatSelected(ColumnListFormat format)
+    {
+        var lineEnding = SqlText.Text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+        var indentation = DetectIndentation(SqlText.Text, SqlText.CaretIndex);
+        return ColumnListFormatter.Format(
+            _descriptionRows.Where(row => row.IsIncluded).Select(row => row.Column),
+            format, _descriptionReference?.RelationAlias, lineEnding, indentation);
+    }
+
+    private void ApplyEditorEdit(EditorTextEdit edit)
+    {
+        SqlText.BeginChange();
+        try
+        {
+            SqlText.Select(edit.Start, edit.Length);
+            SqlText.SelectedText = edit.Replacement;
+            SqlText.CaretIndex = edit.CaretIndex;
+        }
+        finally { SqlText.EndChange(); }
+        SqlText.Focus();
+    }
+
+    private static string DetectIndentation(string sql, int caret)
+    {
+        var lineStart = sql.LastIndexOf('\n', Math.Max(0, caret - 1)) + 1;
+        var count = 0;
+        while (lineStart + count < sql.Length && sql[lineStart + count] is ' ' or '\t') count++;
+        var existing = sql.Substring(lineStart, count);
+        return existing + "    ";
+    }
+
+    private void DescriptionColumns_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key == System.Windows.Input.Key.Space
+            && DescriptionColumns.SelectedItems.Cast<DescriptionColumnRow>().ToArray() is { Length: > 0 } rows)
+        {
+            foreach (var row in rows) row.IsIncluded = !row.IsIncluded;
+            DescriptionColumns.Items.Refresh();
+            e.Handled = true;
+        }
+        else if (e.Key == System.Windows.Input.Key.Escape)
+        {
+            SqlText.Focus();
+            e.Handled = true;
+        }
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        string[] suffixes = ["B", "KiB", "MiB", "GiB", "TiB"];
+        var value = (double)bytes;
+        var index = 0;
+        while (value >= 1024 && index < suffixes.Length - 1) { value /= 1024; index++; }
+        return $"{value:N1} {suffixes[index]}";
     }
     public async Task CancelAsync()
     {
@@ -908,6 +1242,89 @@ public partial class QueryTabView : UserControl
             ViewState = ResultViewState.Empty;
             PageVersion++;
             Grid.ItemsSource = page.DisplayRows;
+        }
+    }
+    private sealed class DescriptionColumnRow(ObjectDescriptionColumn column) : INotifyPropertyChanged
+    {
+        private bool _isIncluded = true;
+        public ObjectDescriptionColumn Column { get; } = column;
+        public bool IsIncluded
+        {
+            get => _isIncluded;
+            set
+            {
+                if (_isIncluded == value) return;
+                _isIncluded = value;
+                PropertyChanged?.Invoke(this, new(nameof(IsIncluded)));
+            }
+        }
+        public int Ordinal => Column.Ordinal;
+        public string Name => Column.Name;
+        public string DataType => Column.DataType;
+        public string NullableText => Column.IsNullable ? "Yes" : "No";
+        public string DefaultText => Column.GeneratedExpression is not null
+            ? $"generated: {Column.GeneratedExpression}"
+            : !string.IsNullOrWhiteSpace(Column.IdentityMode)
+                ? $"identity {Column.IdentityMode}"
+                : Column.DefaultExpression ?? string.Empty;
+        public string KeyText => string.Join("/", new[]
+        {
+            Column.IsPrimaryKey ? "PK" : null,
+            Column.IsForeignKey ? "FK" : null,
+            Column.IsUnique ? "UQ" : null,
+        }.Where(value => value is not null));
+        public string? Comment => Column.Comment;
+        public event PropertyChangedEventHandler? PropertyChanged;
+    }
+
+    private sealed class DescriptionCandidateDialog : Window
+    {
+        private readonly ListBox _list;
+        public ObjectDescriptionCandidate? SelectedCandidate => _list.SelectedItem as ObjectDescriptionCandidate;
+
+        public DescriptionCandidateDialog(
+            string target, IReadOnlyList<ObjectDescriptionCandidate> candidates)
+        {
+            Title = $"Choose object — {target}";
+            Width = 570;
+            Height = 300;
+            MinWidth = 420;
+            MinHeight = 220;
+            WindowStartupLocation = WindowStartupLocation.CenterOwner;
+            var panel = new DockPanel { Margin = new Thickness(8) };
+            var prompt = new TextBlock
+            {
+                Text = "More than one PostgreSQL object matches. Choose the intended object:",
+                Margin = new Thickness(0, 0, 0, 7),
+            };
+            DockPanel.SetDock(prompt, Dock.Top);
+            panel.Children.Add(prompt);
+            _list = new ListBox
+            {
+                ItemsSource = candidates,
+                DisplayMemberPath = nameof(ObjectDescriptionCandidate.QualifiedName),
+                SelectedIndex = 0,
+            };
+            var buttons = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(0, 7, 0, 0),
+            };
+            var open = new Button { Content = "Describe", IsDefault = true, MinWidth = 78 };
+            open.Click += (_, _) => { if (_list.SelectedItem is not null) DialogResult = true; };
+            var cancel = new Button
+            {
+                Content = "Cancel", IsCancel = true, MinWidth = 70, Margin = new Thickness(7, 0, 0, 0),
+            };
+            buttons.Children.Add(open);
+            buttons.Children.Add(cancel);
+            DockPanel.SetDock(buttons, Dock.Bottom);
+            panel.Children.Add(buttons);
+            _list.MouseDoubleClick += (_, _) => DialogResult = true;
+            panel.Children.Add(_list);
+            Content = panel;
+            Loaded += (_, _) => _list.Focus();
         }
     }
     private sealed class InputDialog : Window { public string Value => Box.Text; private readonly TextBox Box = new(); public InputDialog(string title, string prompt) { Title = title; Width = 300; Height = 130; WindowStartupLocation = WindowStartupLocation.CenterOwner; var panel = new StackPanel { Margin = new Thickness(10) }; panel.Children.Add(new TextBlock { Text = prompt }); panel.Children.Add(Box); var button = new Button { Content = "OK", IsDefault = true, Margin = new Thickness(0, 8, 0, 0) }; button.Click += (_, _) => DialogResult = true; panel.Children.Add(button); Content = panel; } }

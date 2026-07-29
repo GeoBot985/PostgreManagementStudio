@@ -23,6 +23,10 @@ public sealed class ProductionCompositionTests
         Assert.IsType<JsonApplicationSettingsStore>(provider.GetRequiredService<IApplicationSettingsStore>());
         Assert.NotNull(provider.GetRequiredService<QueryTabManager>());
         Assert.NotNull(provider.GetRequiredService<ObjectExplorerService>());
+        Assert.IsType<EditorObjectResolver>(provider.GetRequiredService<IEditorObjectResolver>());
+        Assert.IsType<NpgsqlObjectDescriptionMetadataProvider>(
+            provider.GetRequiredService<IObjectDescriptionMetadataProvider>());
+        Assert.NotNull(provider.GetRequiredService<ObjectDescriptionService>());
         Assert.NotNull(provider.GetRequiredService<DestructiveOperationGuard>());
         Assert.IsType<WpfUserConfirmationService>(provider.GetRequiredService<IUserConfirmationService>());
         Assert.NotNull(provider.GetRequiredService<RecoverySnapshotService>());

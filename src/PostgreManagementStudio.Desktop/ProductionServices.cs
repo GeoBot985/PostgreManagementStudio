@@ -46,6 +46,9 @@ public static class ProductionServices
         services.AddTransient<IObjectScriptMetadataProvider, NpgsqlObjectScriptMetadataProvider>();
         services.AddTransient<ObjectScriptService>();
         services.AddTransient<IObjectActionService, NpgsqlObjectActionService>();
+        services.AddSingleton<IEditorObjectResolver, EditorObjectResolver>();
+        services.AddTransient<IObjectDescriptionMetadataProvider, NpgsqlObjectDescriptionMetadataProvider>();
+        services.AddTransient<ObjectDescriptionService>();
         services.AddSingleton<IMetadataDiagnostics, DiagnosticMetadataDiagnostics>();
         services.AddSingleton<BoundedMetadataCache>();
         services.AddSingleton<HardenedMetadataService>();

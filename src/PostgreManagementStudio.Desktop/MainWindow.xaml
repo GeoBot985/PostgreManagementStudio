@@ -53,6 +53,8 @@
         <MenuItem Header="_Execute" Command="{x:Static local:ShellCommands.Execute}" InputGestureText="F5 / Ctrl+Enter"/>
         <MenuItem Header="_Cancel Executing Query" Command="{x:Static local:ShellCommands.Cancel}" InputGestureText="Esc"/>
         <Separator/>
+        <MenuItem Header="_Describe Object" Command="{x:Static local:ShellCommands.DescribeObject}" InputGestureText="Alt+F1"/>
+        <Separator/>
         <MenuItem Header="Display _Estimated Execution Plan" Command="{x:Static local:ShellCommands.EstimatedPlan}" InputGestureText="Ctrl+L"/>
         <MenuItem Header="Include _Actual Execution Plan" Command="{x:Static local:ShellCommands.ToggleActualPlan}" IsCheckable="True"
                   IsChecked="{Binding IsChecked, ElementName=ActualPlanButton, Mode=TwoWay}"/>

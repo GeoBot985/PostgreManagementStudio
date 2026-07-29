@@ -40,6 +40,7 @@
           <MenuItem Header="Select All" Command="ApplicationCommands.SelectAll"/>
           <Separator/>
           <MenuItem Header="Execute" Command="{x:Static local:ShellCommands.Execute}"/>
+          <MenuItem Header="Describe Object" Command="{x:Static local:ShellCommands.DescribeObject}" InputGestureText="Alt+F1"/>
           <MenuItem Header="Display Estimated Plan" Command="{x:Static local:ShellCommands.EstimatedPlan}"/>
         </ContextMenu>
       </TextBox.ContextMenu>
@@ -95,6 +96,71 @@
         <TabControl x:Name="PlanTabs" AutomationProperties.Name="Execution plans">
           <TextBlock Text="No execution plan is available." Margin="10" Foreground="DimGray"/>
         </TabControl>
+      </TabItem>
+      <TabItem x:Name="DescriptionTab" Header="Object Description">
+        <DockPanel>
+          <ToolBar DockPanel.Dock="Top" Header="Object description" AutomationProperties.Name="Object description toolbar">
+            <TextBlock Text="Preset:" VerticalAlignment="Center"/>
+            <ComboBox x:Name="DescriptionPreset" Width="125" SelectedIndex="0" SelectionChanged="DescriptionPreset_SelectionChanged"
+                      AutomationProperties.Name="Column preset">
+              <ComboBoxItem Content="All visible"/>
+              <ComboBoxItem Content="Writable"/>
+              <ComboBoxItem Content="Required insert"/>
+              <ComboBoxItem Content="Key columns"/>
+              <ComboBoxItem Content="Non-large"/>
+            </ComboBox>
+            <Button Content="All" Click="DescriptionSelectAll_Click" ToolTip="Include all columns"/>
+            <Button Content="Clear" Click="DescriptionClear_Click" ToolTip="Exclude all columns"/>
+            <Button Content="Invert" Click="DescriptionInvert_Click" ToolTip="Invert included columns"/>
+            <Separator/>
+            <TextBlock Text="Filter:" VerticalAlignment="Center"/>
+            <TextBox x:Name="DescriptionFilter" Width="110" TextChanged="DescriptionFilter_TextChanged"
+                     AutomationProperties.Name="Filter described columns"/>
+            <Separator/>
+            <ComboBox x:Name="DescriptionFormat" Width="145" SelectedIndex="2" AutomationProperties.Name="Column-list format">
+              <ComboBoxItem Content="Horizontal"/>
+              <ComboBoxItem Content="Vertical"/>
+              <ComboBoxItem Content="SELECT list"/>
+              <ComboBoxItem Content="Qualified SELECT"/>
+              <ComboBoxItem Content="Quoted SELECT"/>
+              <ComboBoxItem Content="Qualified quoted"/>
+            </ComboBox>
+            <Button Content="Copy" Click="DescriptionCopy_Click"/>
+            <Button Content="Insert" Click="DescriptionInsert_Click"/>
+            <Button Content="Replace *" Click="DescriptionReplaceWildcard_Click"/>
+          </ToolBar>
+          <TextBlock x:Name="DescriptionSummary" DockPanel.Dock="Top" Margin="7,5" Text="Press Alt+F1 on an object name."
+                     AutomationProperties.Name="Object description summary"/>
+          <TabControl x:Name="DescriptionModes">
+            <TabItem Header="Columns">
+              <DataGrid x:Name="DescriptionColumns" AutoGenerateColumns="False" IsReadOnly="False"
+                        CanUserAddRows="False" SelectionMode="Extended" SelectionUnit="FullRow"
+                        PreviewKeyDown="DescriptionColumns_PreviewKeyDown"
+                        AutomationProperties.Name="Object columns">
+                <DataGrid.Columns>
+                  <DataGridCheckBoxColumn Header="Use" Binding="{Binding IsIncluded, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Width="42"/>
+                  <DataGridTextColumn Header="#" Binding="{Binding Ordinal}" IsReadOnly="True" Width="42"/>
+                  <DataGridTextColumn Header="Column" Binding="{Binding Name}" IsReadOnly="True" Width="*"/>
+                  <DataGridTextColumn Header="Data type" Binding="{Binding DataType}" IsReadOnly="True" Width="1.4*"/>
+                  <DataGridTextColumn Header="Nullable" Binding="{Binding NullableText}" IsReadOnly="True" Width="68"/>
+                  <DataGridTextColumn Header="Default / generated" Binding="{Binding DefaultText}" IsReadOnly="True" Width="1.2*"/>
+                  <DataGridTextColumn Header="Key" Binding="{Binding KeyText}" IsReadOnly="True" Width="65"/>
+                  <DataGridTextColumn Header="Comment" Binding="{Binding Comment}" IsReadOnly="True" Width="*"/>
+                </DataGrid.Columns>
+              </DataGrid>
+            </TabItem>
+            <TabItem Header="Text">
+              <TextBox x:Name="DescriptionText" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
+                       FontFamily="Consolas" Padding="6" VerticalScrollBarVisibility="Auto"
+                       HorizontalScrollBarVisibility="Auto" AutomationProperties.Name="Plain text object description"/>
+            </TabItem>
+            <TabItem Header="Definition">
+              <TextBox x:Name="DescriptionDefinition" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
+                       FontFamily="Consolas" Padding="6" VerticalScrollBarVisibility="Auto"
+                       HorizontalScrollBarVisibility="Auto" AutomationProperties.Name="Object definition"/>
+            </TabItem>
+          </TabControl>
+        </DockPanel>
       </TabItem>
     </TabControl>
 

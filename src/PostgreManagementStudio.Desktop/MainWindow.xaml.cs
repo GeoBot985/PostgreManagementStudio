@@ -18,6 +18,8 @@ public partial class MainWindow : Window
     private readonly ObjectExplorerService _objectExplorer;
     private readonly ObjectScriptService _objectScripts;
     private readonly IObjectActionService _objectActions;
+    private readonly IEditorObjectResolver _editorObjectResolver;
+    private readonly ObjectDescriptionService _objectDescriptions;
     private readonly ApplicationSettings _settings;
     private readonly DestructiveOperationGuard _destructiveOperations;
     private readonly BackupRestoreOperationService _backupRestore;
@@ -53,6 +55,8 @@ public partial class MainWindow : Window
         ObjectExplorerService objectExplorer,
         ObjectScriptService objectScripts,
         IObjectActionService objectActions,
+        IEditorObjectResolver editorObjectResolver,
+        ObjectDescriptionService objectDescriptions,
         DestructiveOperationGuard destructiveOperations,
         ApplicationSettings settings,
         BackupRestoreOperationService backupRestore,
@@ -80,6 +84,8 @@ public partial class MainWindow : Window
         _objectExplorer = objectExplorer;
         _objectScripts = objectScripts;
         _objectActions = objectActions;
+        _editorObjectResolver = editorObjectResolver;
+        _objectDescriptions = objectDescriptions;
         _destructiveOperations = destructiveOperations;
         _settings = settings;
         _backupRestore = backupRestore;
@@ -142,6 +148,8 @@ public partial class MainWindow : Window
         BindAsync(ShellCommands.Execute, () => ActiveView!.ExecuteAsync(), _ => State.CanExecute(ShellCommandId.Execute));
         BindAsync(ShellCommands.Cancel, () => ActiveView!.CancelAsync(), _ => State.CanExecute(ShellCommandId.Cancel));
         BindAsync(ShellCommands.EstimatedPlan, () => ActiveView!.ShowEstimatedPlanAsync(), _ => State.CanExecute(ShellCommandId.EstimatedPlan));
+        BindAsync(ShellCommands.DescribeObject, () => ActiveView!.DescribeObjectAsync(),
+            _ => ActiveView is { IsExecuting: false });
         Bind(ShellCommands.ToggleActualPlan, _ => ToggleActualPlan(), _ => State.CanExecute(ShellCommandId.ActualPlan));
         BindAsync(ShellCommands.RefreshObjectExplorer, RefreshObjectExplorerAsync,
             _ => ActiveView?.Connection?.Session.Snapshot.State == RecoveryConnectionState.Connected);
@@ -225,7 +233,8 @@ public partial class MainWindow : Window
         doc.CancellationTimeout = TimeSpan.FromSeconds(_settings.CancellationTimeoutSeconds);
         var view = new QueryTabView(doc, _destructiveOperations, _settings, _backupRestore,
             _backupTools, _backupInspection, _objectSearch, _postgresVersion, _indexAnalysis, _schemaExtractor,
-            _dataTransfer, _resultExport, _transferHistory, _performanceDiagnostics);
+            _dataTransfer, _resultExport, _transferHistory, _performanceDiagnostics,
+            _editorObjectResolver, _objectDescriptions);
         if (recoverySnapshot is not null)
             view.RestoreRecoverySnapshot(recoverySnapshot);
         var tab = new TabItem { Content = view, Tag = doc };

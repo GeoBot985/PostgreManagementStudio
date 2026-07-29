@@ -23,6 +23,7 @@ public static class ShellCommands
     public static RoutedUICommand Execute { get; } = Create("Execute", nameof(Execute), new KeyGesture(Key.F5), new KeyGesture(Key.Enter, ModifierKeys.Control));
     public static RoutedUICommand Cancel { get; } = Create("Cancel Executing Query", nameof(Cancel), new KeyGesture(Key.Escape));
     public static RoutedUICommand EstimatedPlan { get; } = Create("Display Estimated Execution Plan", nameof(EstimatedPlan), new KeyGesture(Key.L, ModifierKeys.Control));
+    public static RoutedUICommand DescribeObject { get; } = Create("Describe Object", nameof(DescribeObject), new KeyGesture(Key.F1, ModifierKeys.Alt));
     public static RoutedUICommand ToggleActualPlan { get; } = Create("Include Actual Execution Plan", nameof(ToggleActualPlan));
     public static RoutedUICommand RefreshObjectExplorer { get; } = Create("Refresh Object Explorer", nameof(RefreshObjectExplorer));
     public static RoutedUICommand Find { get; } = Create("Find", nameof(Find), new KeyGesture(Key.F, ModifierKeys.Control));

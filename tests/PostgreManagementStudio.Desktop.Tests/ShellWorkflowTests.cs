@@ -2,6 +2,7 @@ using System.IO;
 using System.Diagnostics;
 using System.Reflection;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
@@ -64,7 +65,33 @@ public sealed class ShellWorkflowTests
         Assert.Contains(ShellCommands.Execute.InputGestures.Cast<InputGesture>(), x => x is KeyGesture { Key: Key.F5 });
         Assert.Contains(ShellCommands.Execute.InputGestures.Cast<InputGesture>(), x => x is KeyGesture { Key: Key.Enter, Modifiers: ModifierKeys.Control });
         Assert.Contains(ShellCommands.Cancel.InputGestures.Cast<InputGesture>(), x => x is KeyGesture { Key: Key.Escape });
+        Assert.Contains(ShellCommands.DescribeObject.InputGestures.Cast<InputGesture>(),
+            x => x is KeyGesture { Key: Key.F1, Modifiers: ModifierKeys.Alt });
         Assert.Contains(ShellCommands.NextDocument.InputGestures.Cast<InputGesture>(), x => x is KeyGesture { Key: Key.Tab, Modifiers: ModifierKeys.Control });
+    }
+
+    [Fact]
+    [Trait("Category", "UiIntegration")]
+    public void DescribeWorkflowIsReachableFromMenuEditorAndPersistentOutputTab()
+    {
+        RunSta((window, _) =>
+        {
+            window.Show();
+            window.UpdateLayout();
+            var sources = LogicalDescendants(window).OfType<ICommandSource>()
+                .Where(source => ReferenceEquals(source.Command, ShellCommands.DescribeObject))
+                .ToArray();
+            Assert.NotEmpty(sources);
+            var editor = LogicalDescendants(window).OfType<TextBox>()
+                .Single(box => AutomationProperties.GetName(box) == "SQL editor");
+            Assert.Contains(editor.ContextMenu!.Items.OfType<MenuItem>(),
+                item => ReferenceEquals(item.Command, ShellCommands.DescribeObject));
+            var outputTabs = LogicalDescendants(window).OfType<TabControl>()
+                .Single(control => AutomationProperties.GetName(control) == "Query output");
+            Assert.Contains(outputTabs.Items.OfType<TabItem>(),
+                tab => Equals(tab.Header, "Object Description"));
+            Assert.True(ShellCommands.DescribeObject.CanExecute(null, window));
+        });
     }
 
     [Fact]
