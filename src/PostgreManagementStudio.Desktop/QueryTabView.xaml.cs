@@ -32,8 +32,11 @@ public partial class QueryTabView : UserControl
     private readonly PostgreSqlToolDiscoveryService _backupTools;
     private readonly BackupInspectionService _backupInspection;
     private readonly NpgsqlObjectSearchService _objectSearch;
+    private readonly PostgresVersionService _postgresVersion;
     private RestoreWorkspaceWindow? _restoreWorkspace;
     private ObjectSearchWorkspaceWindow? _objectSearchWorkspace;
+    private MaintenanceWorkspaceWindow? _maintenanceWorkspace;
+    private PlanExplorerWindow? _planWorkspace;
     private readonly BackupRestoreOperationController _backupController = new();
     private readonly DocumentFileService _fileService = new(); private SqlDocument _file = new() { DisplayName = "Query" };
     private Guid _recoveryId = Guid.NewGuid();
@@ -41,6 +44,7 @@ public partial class QueryTabView : UserControl
         ApplicationSettings settings, BackupRestoreOperationService backupRestore,
         PostgreSqlToolDiscoveryService backupTools, BackupInspectionService backupInspection,
         NpgsqlObjectSearchService objectSearch,
+        PostgresVersionService postgresVersion,
         IPerformanceDiagnostics performanceDiagnostics)
     {
         InitializeComponent();
@@ -51,6 +55,7 @@ public partial class QueryTabView : UserControl
         _backupTools = backupTools;
         _backupInspection = backupInspection;
         _objectSearch = objectSearch;
+        _postgresVersion = postgresVersion;
         _performanceDiagnostics = performanceDiagnostics;
         _document.ExecutionStateChanged += Document_ExecutionStateChanged;
         Unloaded += QueryTabView_Unloaded;
@@ -66,6 +71,8 @@ public partial class QueryTabView : UserControl
         _isUnloaded = true;
         _restoreWorkspace?.Close();
         _objectSearchWorkspace?.Close();
+        _maintenanceWorkspace?.Close();
+        _planWorkspace?.Close();
         _document.ExecutionStateChanged -= Document_ExecutionStateChanged;
         if (_connection is not null) _connection.Session.StateChanged -= RecoverySession_StateChanged;
         try
@@ -132,6 +139,8 @@ public partial class QueryTabView : UserControl
         if (_document.IsExecuting) throw new InvalidOperationException("A running query retains its existing connection.");
         _restoreWorkspace?.Close();
         _objectSearchWorkspace?.Close();
+        _maintenanceWorkspace?.Close();
+        _planWorkspace?.Close();
         if (_connection is not null) _connection.Session.StateChanged -= RecoverySession_StateChanged;
         _connection = connection;
         if (_connection is not null) _document.Database = _connection.Database;
@@ -721,12 +730,28 @@ public partial class QueryTabView : UserControl
         OutputTabs.SelectedIndex = 1;
     }
     public Task ShowEstimatedPlanAsync() => ShowPlanAsync(PlanType.Estimated);
+    public void FocusPlanWorkspace() { if (_planWorkspace is { IsVisible: true }) _planWorkspace.Activate(); else ShowOutput(2); }
+    public Task OpenMaintenanceWorkspaceAsync()
+    {
+        if (!IsRecoveryConnected) { MessagesText.Text = "Reconnect before opening the maintenance workspace."; OutputTabs.SelectedIndex = 1; return Task.CompletedTask; }
+        if (_maintenanceWorkspace is { IsVisible: true }) { _maintenanceWorkspace.Activate(); return Task.CompletedTask; }
+        var connection = DatabaseConnection.FromConnectionString(CurrentConnectionString()) with { Database = DatabaseText.Text };
+        _maintenanceWorkspace = new MaintenanceWorkspaceWindow(new NpgsqlMaintenanceService(), _postgresVersion, _destructiveOperations,
+            CurrentConnectionString(), connection, Connection?.Configuration.Profile.EnvironmentDisplayName ?? "Unknown") { Owner = Window.GetWindow(this) };
+        _maintenanceWorkspace.Closed += (_, _) => _maintenanceWorkspace = null; _maintenanceWorkspace.Show(); return Task.CompletedTask;
+    }
+    private void OpenPlanWorkspace(ExecutionPlanDocument plan)
+    {
+        _planWorkspace?.Close(); _planWorkspace = new PlanExplorerWindow(plan) { Owner = Window.GetWindow(this) };
+        _planWorkspace.Closed += (_, _) => _planWorkspace = null; _planWorkspace.Show();
+    }
     private async Task ShowPlanAsync(PlanType type) { var sql = SqlText.SelectionLength > 0 ? SqlText.SelectedText : SqlText.Text; if (type == PlanType.Actual && !_destructiveOperations.Confirm(new(DestructiveOperationKind.ActualExecutionPlan, "Confirm actual execution plan", DatabaseText.Text, "Actual plan analysis executes the selected SQL; data changes, locks, triggers, and external side effects are possible.", "Use read-only SQL or an explicit transaction with rollback when possible.", Connection?.Host, DatabaseText.Text, "selected SQL", Connection?.Configuration.Profile.EnvironmentDisplayName, Connection?.Session.Snapshot.State == RecoveryConnectionState.Connected))) return; try { var request = new ExplainRequest(sql, new(type, Buffers: type == PlanType.Actual, StatementTimeout: type == PlanType.Actual ? TimeSpan.FromSeconds(30) : null)); var plan = await new NpgsqlExecutionPlanService().ExplainAsync(CurrentConnectionString(), request); var summary = PlanMetricsService.Summarize(plan); ResultSummary.Text = $"{type} plan: {summary.NodeCount} nodes · Cost {summary.TotalCost} · Rows {summary.RootRows} · Actual {summary.ActualRows}"; MessagesText.Text = plan.RawJson.Length <= 65_536 ? plan.RawJson : plan.RawJson[..65_536] + Environment.NewLine + "… Raw-plan preview limited to 64 KiB."; PlanTabs.Items.Clear(); PlanTabs.Items.Add(CreatePlanTab(plan)); OutputTabs.SelectedIndex = 2; StatusText.Text = "Execution plan complete."; } catch (Exception ex) { MessagesText.Text = SecretRedactor.Redact(ex.Message); OutputTabs.SelectedIndex = 1; StatusText.Text = "Execution plan unavailable."; } finally { WorkspaceStateChanged?.Invoke(this, EventArgs.Empty); } }
     private string CurrentConnectionString() => IsRecoveryConnected && !string.IsNullOrWhiteSpace(_document.ConnectionString)
         ? _document.ConnectionString
         : throw new InvalidOperationException("This query is disconnected or degraded. Reconnect before running database operations.");
     private TabItem CreatePlanTab(ExecutionPlanDocument plan)
     {
+        OpenPlanWorkspace(plan);
         const int maximumRawPreview = 64 * 1024;
         var rawIncomplete = plan.RawJson.Length > maximumRawPreview;
         var raw = new TextBox

@@ -21,29 +21,31 @@ finish one usable surface rather than expose another collection of buttons.
 
 ## Sprint 51 — Database search and live activity workspace
 
-- Target workflows: activity refresh/filter/select; session
-  cancellation/termination with confirmation; optional object activation/history
-  polish for the Sprint 50 search workspace.
-- Backend support: object search, activity snapshot/presentation,
-  session-management service, recovery identity safeguards.
-- Composition required: searchable result grid, object activation, live refresh
-  coordinator, stale-state banner, selection identity, role-aware actions.
-- Unknowns: permission/error wording and safe refresh interval under load.
-- Dependencies: Object Explorer selection model and command routing standard.
-- Acceptance: search result opens the correct object; activity rows remain
-  identity-safe across refresh; cancel/terminate is explicit and auditable;
-  connection loss does not act on stale selection.
-- Risk: large.
+- Completed workflows: target-aware database maintenance and structured
+  execution-plan exploration.
+- Composition delivered: `MaintenanceWorkspaceWindow` provides supported
+  operation selection, version-aware validation, SQL preview, target-aware
+  confirmation, genuine progress messages, cancellation and retry;
+  `PlanExplorerWindow` provides operator search/grid/details, raw-plan viewing,
+  deterministic warnings and raw-plan save.
+- Query History remains deferred because execution capture and privacy-aware
+  persistence are not yet composed into the lifecycle. Live activity remains
+  deferred because refresh and session-action identity safeguards need a full
+  workspace.
+- Acceptance: met for maintenance and plan exploration; see
+  `docs/sprints/SPRINT_51_REPORT.md` and Sprint 51 evidence.
+- Risk: medium; target selection beyond the active database and history remain.
 
 ## Sprint 52 — Execution-plan explorer and SQL completion
 
-- Target workflows: import/display/search plan tree; estimated/actual plan
-  review; visible SQL completion list.
-- Backend support: plan parser/explorer/warnings, execution-plan service,
-  `SqlCompletionEngine` and latest-request coordination.
-- Composition required: durable plan workspace, node navigation, warning
-  filters, plan import/export, completion popup with keyboard semantics and
-  metadata context.
+- Target workflows: bounded query history capture/reopen; live activity
+  refresh/filter/select; session cancellation/termination; visible SQL
+  completion list.
+- Backend support: query execution lifecycle/history models, activity/session
+  services, `SqlCompletionEngine` and latest-request coordination.
+- Composition required: privacy-aware history store/workspace, identity-safe
+  activity grid/actions, completion popup with keyboard semantics and metadata
+  context.
 - Unknowns: PostgreSQL version capability display and editor control choice.
 - Dependencies: query document targeting and structured result presentation.
 - Acceptance: plan warnings point to nodes; actual execution is confirmed;

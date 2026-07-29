@@ -21,6 +21,7 @@ public partial class MainWindow : Window
     private readonly PostgreSqlToolDiscoveryService _backupTools;
     private readonly BackupInspectionService _backupInspection;
     private readonly NpgsqlObjectSearchService _objectSearch;
+    private readonly PostgresVersionService _postgresVersion;
     private readonly IConnectionProbe _connectionProbe;
     private readonly IConnectionRecoveryDiagnostics _connectionDiagnostics;
     private readonly IPerformanceDiagnostics _performanceDiagnostics;
@@ -48,6 +49,7 @@ public partial class MainWindow : Window
         PostgreSqlToolDiscoveryService backupTools,
         BackupInspectionService backupInspection,
         NpgsqlObjectSearchService objectSearch,
+        PostgresVersionService postgresVersion,
         IConnectionProbe connectionProbe,
         IConnectionRecoveryDiagnostics connectionDiagnostics,
         IPerformanceDiagnostics performanceDiagnostics,
@@ -67,6 +69,7 @@ public partial class MainWindow : Window
         _backupTools = backupTools;
         _backupInspection = backupInspection;
         _objectSearch = objectSearch;
+        _postgresVersion = postgresVersion;
         _connectionProbe = connectionProbe;
         _connectionDiagnostics = connectionDiagnostics;
         _performanceDiagnostics = performanceDiagnostics;
@@ -133,12 +136,12 @@ public partial class MainWindow : Window
         BindAsync(ShellCommands.ImportData, () => ActiveView!.ImportDataAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
         BindAsync(ShellCommands.Backup, () => ActiveView!.BackupDatabaseAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
         BindAsync(ShellCommands.Restore, () => ActiveView!.OpenRestoreWorkspaceAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
-        BindAsync(ShellCommands.Maintenance, () => ActiveView!.RunMaintenanceAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
+        BindAsync(ShellCommands.Maintenance, () => ActiveView!.OpenMaintenanceWorkspaceAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
         BindAsync(ShellCommands.Security, () => ActiveView!.ShowSecurityRolesAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
         Bind(ShellCommands.ShowObjectExplorer, _ => SetObjectExplorerVisible(ObjectExplorerPane.Visibility != Visibility.Visible), _ => true);
         Bind(ShellCommands.ShowResults, _ => ActiveView!.ShowOutput(0), _ => ActiveView is not null);
         Bind(ShellCommands.ShowMessages, _ => ActiveView!.ShowOutput(1), _ => ActiveView is not null);
-        Bind(ShellCommands.ShowExecutionPlan, _ => ActiveView!.ShowOutput(2), _ => ActiveView is not null);
+        Bind(ShellCommands.ShowExecutionPlan, _ => ActiveView!.FocusPlanWorkspace(), _ => ActiveView is not null);
         Bind(ShellCommands.About, _ => MessageBox.Show(this,
             $"PostgreManagementStudio {AssemblyVersionText()}\n\nA PostgreSQL management desktop for Windows.",
             "About PostgreManagementStudio", MessageBoxButton.OK, MessageBoxImage.Information), _ => true);
@@ -189,7 +192,7 @@ public partial class MainWindow : Window
         doc.CommandTimeout = TimeSpan.FromSeconds(_settings.CommandTimeoutSeconds);
         doc.CancellationTimeout = TimeSpan.FromSeconds(_settings.CancellationTimeoutSeconds);
         var view = new QueryTabView(doc, _destructiveOperations, _settings, _backupRestore,
-            _backupTools, _backupInspection, _objectSearch, _performanceDiagnostics);
+            _backupTools, _backupInspection, _objectSearch, _postgresVersion, _performanceDiagnostics);
         if (recoverySnapshot is not null)
             view.RestoreRecoverySnapshot(recoverySnapshot);
         var tab = new TabItem { Content = view, Tag = doc };

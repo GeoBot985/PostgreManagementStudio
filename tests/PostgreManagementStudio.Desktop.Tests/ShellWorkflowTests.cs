@@ -244,6 +244,33 @@ public sealed class ShellWorkflowTests
         });
     }
 
+    [Fact]
+    [Trait("Category", "UiIntegration")]
+    public void Sprint51_MaintenanceAndPlanWorkspacesExposeStructuredControls()
+    {
+        RunSta((window, provider) =>
+        {
+            var target = new DatabaseConnection("localhost", 5432, "postgres", "postgres");
+            var maintenance = new MaintenanceWorkspaceWindow(
+                new NpgsqlMaintenanceService(), provider.GetRequiredService<PostgresVersionService>(),
+                provider.GetRequiredService<DestructiveOperationGuard>(),
+                "Host=localhost;Database=postgres;Username=postgres", target, "Test");
+            var plan = ExecutionPlanParser.Parse(
+                "SELECT 1",
+                "[{\"Plan\":{\"Node Type\":\"Seq Scan\",\"Relation Name\":\"orders\",\"Plan Rows\":10,\"Total Cost\":4,\"Plans\":[]}}]",
+                PlanType.Estimated);
+            var explorer = new PlanExplorerWindow(plan);
+            Assert.Equal("PostgreSQL maintenance", maintenance.Title);
+            Assert.Contains(LogicalDescendants(maintenance).OfType<TextBlock>(), text => text.Text == "Database maintenance");
+            Assert.Contains(LogicalDescendants(maintenance).OfType<TextBox>(), box => box.IsReadOnly && box.AcceptsReturn);
+            Assert.Equal("Execution plan — Estimated", explorer.Title);
+            Assert.Contains(LogicalDescendants(explorer).OfType<DataGrid>(), grid => grid.Columns.Count >= 5);
+            Assert.Contains(LogicalDescendants(explorer).OfType<TabControl>(), _ => true);
+            maintenance.Close();
+            explorer.Close();
+        });
+    }
+
     private static void RunSta(
         Action<MainWindow, ServiceProvider> test,
         Action<ServiceProvider>? arrange = null)
