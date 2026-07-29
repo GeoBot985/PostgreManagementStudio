@@ -183,6 +183,107 @@ public sealed class QueryDocumentTests
         Assert.Contains("nbtinsert.c", QueryErrorPresentation.Format(error, diagnosticMode: true));
     }
 
+    [Theory]
+    [InlineData(TransactionFailureWindow.BeforeCommandTransmission, QueryTransactionRecoveryState.ServerRolledBackUncommittedWork)]
+    [InlineData(TransactionFailureWindow.DuringCommandExecution, QueryTransactionRecoveryState.ServerRolledBackUncommittedWork)]
+    [InlineData(TransactionFailureWindow.AfterExecutionBeforeAcknowledgement, QueryTransactionRecoveryState.ServerRolledBackUncommittedWork)]
+    [InlineData(TransactionFailureWindow.DuringCommit, QueryTransactionRecoveryState.OutcomeUnknown)]
+    [InlineData(TransactionFailureWindow.DuringRollback, QueryTransactionRecoveryState.ServerRolledBackUncommittedWork)]
+    public void TransactionRecoveryPolicyNeverRetriesAndClassifiesOutcome(
+        TransactionFailureWindow window,
+        QueryTransactionRecoveryState expected)
+    {
+        var result = TransactionRecoveryPolicy.Assess(true, window);
+        Assert.Equal(expected, result.State);
+        Assert.True(result.MustClearLocalTransaction);
+        Assert.False(result.MayRetry);
+    }
+
+    [Fact]
+    public async Task ConnectionGenerationInvalidationCancelsWorkAndCommitOutcomeIsUnknown()
+    {
+        var executor = new ControlledExecutor();
+        await using var doc = Document(executor, "");
+        var generation = Guid.NewGuid();
+        doc.ReplaceConnection("profile-a", ConnectionA, "db_a", generation);
+        doc.TransactionMode = QueryTransactionMode.UserManaged;
+        var running = doc.ExecuteAsync();
+        await executor.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.True(doc.InvalidateConnection(generation, "backend terminated",
+            TransactionFailureWindow.DuringCommit));
+        await running;
+
+        Assert.Equal(QueryDocumentExecutionState.ConnectionLost, doc.State);
+        Assert.Equal(QueryTransactionRecoveryState.OutcomeUnknown, doc.TransactionRecoveryState);
+        Assert.False(doc.CanExecute);
+        Assert.True(doc.BackendStateMayBeStale);
+    }
+
+    [Fact]
+    public void ObsoleteGenerationFailureCannotInvalidateReplacementConnection()
+    {
+        var execution = new ResultExecutionService(new NoOpExecutor());
+        var doc = new QueryDocument(execution, "Query 1");
+        var oldGeneration = Guid.NewGuid();
+        var newGeneration = Guid.NewGuid();
+        doc.ReplaceConnection("profile-a", ConnectionA, "db_a", oldGeneration);
+        doc.ReplaceConnection("profile-b", ConnectionB, "db_b", newGeneration);
+
+        Assert.False(doc.InvalidateConnection(oldGeneration, "late failure"));
+        Assert.Equal(ConnectionB, doc.ConnectionString);
+        Assert.Equal(newGeneration, doc.ConnectionGenerationId);
+    }
+
+    [Fact]
+    public async Task FailedExecutionPreservesLastSuccessfulResults()
+    {
+        var executor = new SuccessThenConnectionLossExecutor();
+        await using var doc = Document(executor, "");
+        doc.ReplaceConnection("profile-a", ConnectionA, "db_a", Guid.NewGuid());
+        var successful = await doc.ExecuteAsync();
+        Assert.NotNull(successful);
+        Assert.Same(successful, doc.Session);
+
+        var failed = await doc.ExecuteAsync();
+
+        Assert.NotNull(failed);
+        Assert.Equal(ResultSessionStatus.Failed, failed!.Status);
+        Assert.Same(successful, doc.Session);
+        await failed.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task ReconnectionNeverReplaysPreviouslySubmittedSql()
+    {
+        var executor = new CountingExecutor();
+        await using var doc = Document(executor, "");
+        var firstGeneration = Guid.NewGuid();
+        doc.ReplaceConnection("profile-a", ConnectionA, "db_a", firstGeneration);
+        await doc.ExecuteAsync();
+        Assert.Equal(1, executor.Attempts);
+
+        doc.InvalidateConnection(firstGeneration, "connection lost");
+        doc.ReplaceConnection("profile-a", ConnectionA, "db_a", Guid.NewGuid());
+        await Task.Yield();
+
+        Assert.Equal(1, executor.Attempts);
+        Assert.True(doc.CanExecute);
+    }
+
+    [Fact]
+    public async Task FaultyStateSubscriberCannotAbortDatabaseExecution()
+    {
+        await using var doc = Document(new CountingExecutor(), ConnectionA);
+        doc.ExecutionStateChanged += (_, _) => throw new FormatException("broken view formatting");
+
+        var session = await doc.ExecuteAsync();
+
+        Assert.NotNull(session);
+        Assert.Equal(ResultSessionStatus.Completed, session!.Status);
+        Assert.Equal(QueryDocumentExecutionState.Completed, doc.State);
+    }
+
     private static QueryDocument Document(IQueryExecutor executor, string connection)
         => new(new ResultExecutionService(executor), "Query 1")
         {
@@ -238,5 +339,40 @@ public sealed class QueryDocumentTests
     {
         public List<QueryExecutionDiagnostic> Items { get; } = new();
         public void Record(QueryExecutionDiagnostic diagnostic) => Items.Add(diagnostic);
+    }
+
+    private sealed class SuccessThenConnectionLossExecutor : IQueryExecutor
+    {
+        private int _attempt;
+
+        public async IAsyncEnumerable<QueryExecutionEvent> ExecuteAsync(
+            QueryRequest request,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.CompletedTask;
+            yield return new ExecutionStarted(DateTimeOffset.UtcNow);
+            if (Interlocked.Increment(ref _attempt) == 1)
+            {
+                yield return new ExecutionCompleted(TimeSpan.Zero, 0);
+                yield break;
+            }
+            yield return new ExecutionFailed(new DatabaseError(
+                "connection terminated", "FATAL", "57P01", null, null, null,
+                null, null, null, null, null, DatabaseErrorKind.ConnectionLost));
+        }
+    }
+
+    private sealed class CountingExecutor : IQueryExecutor
+    {
+        public int Attempts { get; private set; }
+        public async IAsyncEnumerable<QueryExecutionEvent> ExecuteAsync(
+            QueryRequest request,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.CompletedTask;
+            Attempts++;
+            yield return new ExecutionStarted(DateTimeOffset.UtcNow);
+            yield return new ExecutionCompleted(TimeSpan.Zero, 0);
+        }
     }
 }

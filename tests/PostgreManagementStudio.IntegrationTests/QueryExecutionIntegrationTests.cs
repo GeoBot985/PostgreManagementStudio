@@ -301,6 +301,46 @@ public sealed class QueryExecutionIntegrationTests
     }
 
     [PostgreSqlFact]
+    public async Task InteractiveDialogConnectionStringExecutesThroughDocument()
+    {
+        var source = new Npgsql.NpgsqlConnectionStringBuilder(ConnectionString);
+        var builder = new System.Data.Common.DbConnectionStringBuilder
+        {
+            ["Host"] = source.Host,
+            ["Port"] = source.Port,
+            ["Database"] = source.Database,
+            ["Username"] = source.Username,
+            ["SSL Mode"] = source.SslMode.ToString(),
+            ["Pooling"] = true,
+            ["Application Name"] = "PostgreManagementStudio",
+        };
+        if (!string.IsNullOrEmpty(source.Password)) builder["Password"] = source.Password;
+        await using var document = new QueryDocument(
+            new ResultExecutionService(
+                new NpgsqlQueryExecutor(),
+                new ResultStorageOptions(
+                    maximumSessionMemoryBytes: 128L * 1024 * 1024,
+                    maximumResultSetMemoryBytes: 64L * 1024 * 1024,
+                    maximumRowsPerResultSet: 10_000)),
+            "Interactive context")
+        {
+            SqlText = "SELECT version()",
+        };
+        var configuration = EffectiveConnectionConfigurationBuilder.FromConnectionString(
+            "interactive", builder.ConnectionString, "PostgreManagementStudio");
+        await using var recovery = new ConnectionRecoverySession(new NpgsqlConnectionProbe());
+        var connected = await recovery.ConnectAsync(configuration);
+        document.ReplaceConnection("interactive", builder.ConnectionString, source.Database ?? "postgres",
+            connected.GenerationId);
+
+        var session = await document.ExecuteAsync(cancellationToken: recovery.GenerationToken);
+
+        Assert.NotNull(session);
+        Assert.Equal(ResultSessionStatus.Completed, session!.Status);
+        Assert.Single(session.ResultSets);
+    }
+
+    [PostgreSqlFact]
     public async Task TenConcurrentEditorExecutionsRemainIndependent()
     {
         var executions = Enumerable.Range(1, 10)

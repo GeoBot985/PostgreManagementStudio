@@ -107,22 +107,48 @@ public sealed class ObjectExplorerTests
             service.LoadRootAsync("Host=example", "regression"));
     }
 
+    [Fact]
+    public async Task ConnectionLossRetainsTreeAsStaleUntilNewGenerationReloads()
+    {
+        var provider = new RecordingProvider();
+        await using var service = new ObjectExplorerService(provider);
+        var firstGeneration = Guid.NewGuid();
+        var root = await service.LoadRootAsync(
+            "Host=example", "regression", connectionGenerationId: firstGeneration);
+        var schema = Assert.Single(root.Children);
+
+        service.MarkStale();
+
+        Assert.True(service.IsStale);
+        Assert.Same(root, service.CurrentRoot);
+        Assert.True(root.IsStale);
+        Assert.True(schema.IsStale);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.ExpandAsync(schema));
+
+        var refreshed = await service.LoadRootAsync(
+            "Host=example", "regression", refresh: true,
+            connectionGenerationId: Guid.NewGuid());
+        Assert.False(service.IsStale);
+        Assert.False(refreshed.IsStale);
+        Assert.Equal(2, provider.RootLoads);
+    }
+
     private static PostgresObjectIdentity Identity(
         uint oid,
         PostgresObjectClass objectClass,
         string name,
         uint? parent = null) => new()
-    {
-        ConnectionProfileId = "environment:PMS_CONNECTION_STRING",
-        ConfigurationIdentity = Hash("Host=example"),
-        ServerFingerprint = "server",
-        DatabaseOid = 1,
-        ObjectOid = oid,
-        ObjectClass = objectClass,
-        ParentOid = parent,
-        SchemaOid = objectClass == PostgresObjectClass.Schema ? oid : parent,
-        NameSnapshot = name,
-    };
+        {
+            ConnectionProfileId = "environment:PMS_CONNECTION_STRING",
+            ConfigurationIdentity = Hash("Host=example"),
+            ServerFingerprint = "server",
+            DatabaseOid = 1,
+            ObjectOid = oid,
+            ObjectClass = objectClass,
+            ParentOid = parent,
+            SchemaOid = objectClass == PostgresObjectClass.Schema ? oid : parent,
+            NameSnapshot = name,
+        };
 
     private static string Hash(string value) =>
         Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value)));

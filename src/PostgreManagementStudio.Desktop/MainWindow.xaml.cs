@@ -21,11 +21,14 @@ public partial class MainWindow : Window
     private readonly PostgreSqlToolDiscoveryService _backupTools;
     private readonly BackupInspectionService _backupInspection;
     private readonly IConnectionProbe _connectionProbe;
+    private readonly IConnectionRecoveryDiagnostics _connectionDiagnostics;
+    private readonly HashSet<ConnectionRecoverySession> _recoverySessions = [];
     private readonly DispatcherTimer _statusTimer;
     private CancellationTokenSource? _metadataCancellation;
     private ShellConnectionInfo? _defaultConnection;
     private bool _shutdownInProgress;
     private bool _shutdownApproved;
+    private int _statusTicks;
 
     public MainWindow(
         QueryTabManager tabs,
@@ -35,7 +38,8 @@ public partial class MainWindow : Window
         BackupRestoreOperationService backupRestore,
         PostgreSqlToolDiscoveryService backupTools,
         BackupInspectionService backupInspection,
-        IConnectionProbe connectionProbe)
+        IConnectionProbe connectionProbe,
+        IConnectionRecoveryDiagnostics connectionDiagnostics)
     {
         InitializeComponent();
         _tabs = tabs;
@@ -46,11 +50,17 @@ public partial class MainWindow : Window
         _backupTools = backupTools;
         _backupInspection = backupInspection;
         _connectionProbe = connectionProbe;
+        _connectionDiagnostics = connectionDiagnostics;
         _defaultConnection = ReadDevelopmentFallback();
         RegisterCommands();
         AddTab();
         _statusTimer = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background,
-            (_, _) => UpdateShellState(), Dispatcher);
+            async (_, _) =>
+            {
+                UpdateShellState();
+                if (++_statusTicks % 5 == 0)
+                    await CheckActiveConnectionHealthAsync();
+            }, Dispatcher);
         _statusTimer.Start();
     }
 
@@ -61,6 +71,8 @@ public partial class MainWindow : Window
     {
         Bind(ShellCommands.NewQuery, _ => AddTab(), _ => true);
         BindAsync(ShellCommands.Connect, ConnectAsync, _ => ActiveView?.IsExecuting != true);
+        BindAsync(ShellCommands.Reconnect, ReconnectAsync,
+            _ => ActiveView?.Connection?.Session.CanReconnect == true && ActiveView.IsExecuting == false);
         BindAsync(ShellCommands.ChangeConnection, ConnectAsync, _ => ActiveView is { IsExecuting: false });
         Bind(ShellCommands.Disconnect, _ => DisconnectActive(), _ => State.CanExecute(ShellCommandId.ChangeConnection) && State.IsConnected);
         BindAsync(ShellCommands.OpenFile, () => ActiveView!.OpenFileAsync(), _ => State.CanExecute(ShellCommandId.OpenFile));
@@ -75,7 +87,8 @@ public partial class MainWindow : Window
         BindAsync(ShellCommands.Cancel, () => ActiveView!.CancelAsync(), _ => State.CanExecute(ShellCommandId.Cancel));
         BindAsync(ShellCommands.EstimatedPlan, () => ActiveView!.ShowEstimatedPlanAsync(), _ => State.CanExecute(ShellCommandId.EstimatedPlan));
         Bind(ShellCommands.ToggleActualPlan, _ => ToggleActualPlan(), _ => State.CanExecute(ShellCommandId.ActualPlan));
-        BindAsync(ShellCommands.RefreshObjectExplorer, RefreshObjectExplorerAsync, _ => ActiveDocument is { ConnectionString.Length: > 0 });
+        BindAsync(ShellCommands.RefreshObjectExplorer, RefreshObjectExplorerAsync,
+            _ => ActiveView?.Connection?.Session.Snapshot.State == RecoveryConnectionState.Connected);
         Bind(ShellCommands.Find, _ => ActiveView!.ShowFind(false), _ => ActiveView is not null);
         Bind(ShellCommands.FindNext, _ => ActiveView!.FindNext(), _ => ActiveView is not null);
         Bind(ShellCommands.Replace, _ => ActiveView!.ShowFind(true), _ => ActiveView is not null);
@@ -103,7 +116,7 @@ public partial class MainWindow : Window
 
     private ShellCommandState State => new(
         ActiveView is not null,
-        !string.IsNullOrWhiteSpace(ActiveDocument?.ConnectionString),
+        ActiveView?.Connection?.Session.Snapshot.State == RecoveryConnectionState.Connected,
         ActiveView?.IsExecuting == true,
         ActiveView?.HasResults == true,
         ActiveDocument?.IsDirty == true);
@@ -130,9 +143,8 @@ public partial class MainWindow : Window
     private void AddTab()
     {
         var connection = _defaultConnection;
-        var doc = _tabs.Open(connection?.ConnectionString, connection?.Database ?? _settings.DefaultDatabase);
-        doc.ConnectionProfileId = connection is null ? string.Empty :
-            connection.IsDevelopmentFallback ? "environment:PMS_CONNECTION_STRING" : "interactive";
+        var doc = _tabs.Open(null, connection?.Database ?? _settings.DefaultDatabase);
+        doc.ConnectionProfileId = string.Empty;
         doc.CommandTimeout = TimeSpan.FromSeconds(_settings.CommandTimeoutSeconds);
         doc.CancellationTimeout = TimeSpan.FromSeconds(_settings.CancellationTimeoutSeconds);
         var view = new QueryTabView(doc, _destructiveOperations, _settings, _backupRestore, _backupTools, _backupInspection);
@@ -141,6 +153,11 @@ public partial class MainWindow : Window
         tab.ToolTip = view.SafeToolTip;
         view.DirtyChanged += View_StateChanged;
         view.WorkspaceStateChanged += View_StateChanged;
+        if (connection is not null)
+        {
+            TrackConnection(connection);
+            view.ApplyConnection(connection);
+        }
         QueryTabs.Items.Add(tab);
         QueryTabs.SelectedItem = tab;
         UpdateTab(tab, view);
@@ -239,22 +256,33 @@ public partial class MainWindow : Window
 
     private async Task ConnectAsync()
     {
-        var current = ActiveDocument is { ConnectionString.Length: > 0 } doc ? ParseConnection(doc.ConnectionString, false) : _defaultConnection;
-        var dialog = new ConnectionDialog(_connectionProbe, current) { Owner = this };
+        var current = ActiveView?.Connection ?? _defaultConnection;
+        var dialog = new ConnectionDialog(_connectionProbe, _connectionDiagnostics, current) { Owner = this };
         if (dialog.ShowDialog() != true || dialog.Connection is null) return;
         _defaultConnection = dialog.Connection;
+        TrackConnection(dialog.Connection);
         if (ActiveView is null) AddTab();
         else ActiveView.ApplyConnection(dialog.Connection);
         UpdateShellState();
         await RefreshObjectExplorerAsync();
     }
 
+    private async Task ReconnectAsync()
+    {
+        var session = ActiveView?.Connection?.Session;
+        if (session?.CanReconnect != true) return;
+        var snapshot = await session.ReconnectAsync();
+        if (snapshot.State == RecoveryConnectionState.Connected)
+            await RefreshObjectExplorerAsync();
+    }
+
     private void DisconnectActive()
     {
-        if (ActiveView?.IsExecuting == true) return;
-        ActiveView?.ApplyConnection(null);
-        _defaultConnection = null;
-        ObjectExplorerTree.ItemsSource = new[] { "Disconnected. Use File > Connect to select a PostgreSQL server." };
+        var connection = ActiveView?.Connection;
+        if (connection is null || ActiveView?.IsExecuting == true) return;
+        connection.Session.Disconnect();
+        if (ReferenceEquals(_defaultConnection?.Session, connection.Session)) _defaultConnection = null;
+        MarkObjectExplorerStale("Disconnected. Reconnect to refresh PostgreSQL objects.");
         UpdateShellState();
     }
 
@@ -267,9 +295,9 @@ public partial class MainWindow : Window
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
-        if (_defaultConnection?.IsDevelopmentFallback == true)
-            ConnectionStatusText.Text = "Connected (development environment fallback)";
-        await RefreshObjectExplorerAsync();
+        if (_defaultConnection is null) return;
+        TrackConnection(_defaultConnection);
+        await _defaultConnection.Session.ConnectAsync(_defaultConnection.Configuration);
     }
 
     private void QueryTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -290,24 +318,28 @@ public partial class MainWindow : Window
     private async Task RefreshObjectExplorerAsync()
     {
         var document = ActiveDocument;
-        if (document is null || string.IsNullOrWhiteSpace(document.ConnectionString))
+        var recovery = ActiveView?.Connection?.Session;
+        if (document is null || recovery?.Snapshot.State != RecoveryConnectionState.Connected
+            || string.IsNullOrWhiteSpace(document.ConnectionString))
         {
-            ObjectExplorerTree.ItemsSource = new[] { "Disconnected. Use File > Connect to load PostgreSQL objects." };
+            MarkObjectExplorerStale("Object Explorer is stale. Reconnect to refresh PostgreSQL objects.");
             return;
         }
         try
         {
             _metadataCancellation?.Cancel();
             _metadataCancellation?.Dispose();
-            _metadataCancellation = new CancellationTokenSource();
+            _metadataCancellation = CancellationTokenSource.CreateLinkedTokenSource(recovery.GenerationToken);
             var expanded = ExpandedIdentities(ObjectExplorerTree.Items).ToHashSet();
             var selectionPath = SelectedIdentityPath();
             var root = await _objectExplorer.LoadRootAsync(document.ConnectionString, document.Database, refresh: true,
+                connectionGenerationId: recovery.Snapshot.GenerationId,
                 cancellationToken: _metadataCancellation.Token);
             ObjectExplorerTree.ItemsSource = null;
             ObjectExplorerTree.Items.Clear();
             ObjectExplorerTree.Items.Add(ToTreeItem(root, expanded));
             ObjectExplorerTree.ToolTip = null;
+            ObjectExplorerHeader.Text = "Object Explorer";
             foreach (var identity in selectionPath)
                 if (FindItem(ObjectExplorerTree.Items, identity) is { } selected)
                 {
@@ -317,12 +349,67 @@ public partial class MainWindow : Window
                 }
         }
         catch (OperationCanceledException) { }
+        catch (MetadataLoadException ex) when (ex.Error.Category is MetadataFailureCategory.ConnectionLost
+            or MetadataFailureCategory.DatabaseUnavailable)
+        {
+            recovery.ReportFailure(DatabaseFailureClassifier.FromSqlState(ex.Error.SqlState, ex.Error.Message));
+            MarkObjectExplorerStale(ex.Error.Message);
+        }
         catch (Exception ex)
         {
             var message = $"Object Explorer unavailable: {SecretRedactor.Redact(ex.Message)}";
             if (ObjectExplorerTree.Items.Count == 0) ObjectExplorerTree.ItemsSource = new[] { message };
             else ObjectExplorerTree.ToolTip = message;
         }
+    }
+
+    private void TrackConnection(ShellConnectionInfo connection)
+    {
+        if (!_recoverySessions.Add(connection.Session)) return;
+        connection.Session.StateChanged += RecoverySession_StateChanged;
+    }
+
+    private async void RecoverySession_StateChanged(object? sender, EventArgs e)
+    {
+        if (sender is not ConnectionRecoverySession session) return;
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.BeginInvoke(() => RecoverySession_StateChanged(sender, e));
+            return;
+        }
+        if (!ReferenceEquals(ActiveView?.Connection?.Session, session)) return;
+        var snapshot = session.Snapshot;
+        if (snapshot.State == RecoveryConnectionState.Connected)
+        {
+            // Query-tab subscribers apply the new generation during the same
+            // StateChanged dispatch. Defer metadata until those subscribers
+            // have made the connection usable.
+            await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Background);
+            if (session.Snapshot.State == RecoveryConnectionState.Connected)
+                await RefreshObjectExplorerAsync();
+        }
+        else if (snapshot.State == RecoveryConnectionState.Connecting
+            && snapshot.GenerationId == Guid.Empty)
+        {
+            ObjectExplorerHeader.Text = "Object Explorer (connecting…)";
+            ObjectExplorerTree.ItemsSource = new[] { "Connecting to PostgreSQL…" };
+        }
+        else
+        {
+            MarkObjectExplorerStale(snapshot.Failure?.Message ?? $"Connection state: {snapshot.State}.");
+        }
+        UpdateShellState();
+        CommandManager.InvalidateRequerySuggested();
+    }
+
+    private void MarkObjectExplorerStale(string message)
+    {
+        _metadataCancellation?.Cancel();
+        _objectExplorer.MarkStale();
+        ObjectExplorerHeader.Text = "Object Explorer (stale — reconnect required)";
+        ObjectExplorerTree.ToolTip = SecretRedactor.Redact(message);
+        if (ObjectExplorerTree.Items.Count == 0)
+            ObjectExplorerTree.ItemsSource = new[] { SecretRedactor.Redact(message) };
     }
 
     private void UpdateShellState()
@@ -336,18 +423,36 @@ public partial class MainWindow : Window
             SetStatus("Disconnected", "—", "—", "—", "No active query", "—", (1, 1));
             return;
         }
-        var connected = !string.IsNullOrWhiteSpace(doc.ConnectionString);
+        var snapshot = view!.Connection?.Session.Snapshot;
+        var connected = snapshot?.State == RecoveryConnectionState.Connected
+            && !string.IsNullOrWhiteSpace(doc.ConnectionString);
         DatabaseSelector.IsEnabled = connected && !view!.IsExecuting;
         DatabaseSelector.Text = doc.Database;
-        var parsed = connected ? DatabaseConnection.FromConnectionString(doc.ConnectionString) : null;
-        ConnectionToolbarText.Text = connected ? $"{parsed!.Username}@{parsed.Host}:{parsed.Port}" : "Connect…";
+        var connection = view.Connection;
+        ConnectionToolbarText.Text = connection is null
+            ? "Connect…"
+            : $"{connection.Username}@{connection.Host}:{connection.Port} ({snapshot!.State})";
         var elapsed = view!.ExecutionElapsed;
         var query = view.IsExecuting
-            ? $"{doc.State} · {elapsed?.ToString(@"hh\\:mm\\:ss") ?? "00:00:00"}"
-            : doc.Message;
+            ? $"{doc.State} · {elapsed?.ToString(@"hh\:mm\:ss") ?? "00:00:00"}"
+            : view.QueryStatus;
         var rows = view.HasResults ? $"{view.RowsReceived:N0} returned; {view.RowsAffected:N0} affected" : "—";
-        SetStatus(connected ? (doc.ConnectionProfileId.StartsWith("environment", StringComparison.Ordinal) ? "Connected (environment fallback)" : "Connected") : "Disconnected",
-            parsed?.Host ?? "—", doc.Database, parsed?.Username ?? "—", query, rows, view.CaretPosition);
+        var stateText = snapshot is null ? "Disconnected" : snapshot.State.ToString();
+        if (connected && connection!.IsDevelopmentFallback) stateText += " (environment fallback)";
+        if (snapshot?.BackendProcessId is { } pid) stateText += $" · PID {pid}";
+        SetStatus(stateText, connection?.Host ?? "—", doc.Database, connection?.Username ?? "—", query, rows, view.CaretPosition);
+    }
+
+    private async Task CheckActiveConnectionHealthAsync()
+    {
+        var session = ActiveView?.Connection?.Session;
+        if (session?.Snapshot.State != RecoveryConnectionState.Connected) return;
+        try { await session.CheckHealthAsync(session.GenerationToken); }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            session.ReportFailure(ex, FailureOperationPhase.Connect);
+        }
     }
 
     private void SetStatus(string connection, string server, string database, string role, string query, string rows, (int Line, int Column) caret)
@@ -361,19 +466,25 @@ public partial class MainWindow : Window
         CaretStatusText.Text = $"Ln {caret.Line}, Col {caret.Column}  INS";
     }
 
-    private static ShellConnectionInfo? ReadDevelopmentFallback()
+    private ShellConnectionInfo? ReadDevelopmentFallback()
     {
         var value = Environment.GetEnvironmentVariable("PMS_CONNECTION_STRING");
         return string.IsNullOrWhiteSpace(value) ? null : ParseConnection(value, true);
     }
 
-    private static ShellConnectionInfo ParseConnection(string value, bool fallback)
+    private ShellConnectionInfo ParseConnection(string value, bool fallback)
     {
         var connection = DatabaseConnection.FromConnectionString(value);
         var raw = new DbConnectionStringBuilder { ConnectionString = value };
         var sslText = raw.TryGetValue("SSL Mode", out var ssl) ? Convert.ToString(ssl) : "Prefer";
         var sslMode = Enum.TryParse<Npgsql.SslMode>(sslText?.Replace(" ", ""), true, out var parsed) ? parsed : Npgsql.SslMode.Prefer;
-        return new(value, connection.Host, connection.Port, connection.Database, connection.Username, sslMode, null, null, fallback);
+        var configuration = EffectiveConnectionConfigurationBuilder.FromConnectionString(
+            fallback ? "environment:PMS_CONNECTION_STRING" : $"interactive:{Guid.NewGuid():N}",
+            value,
+            "PostgreManagementStudio");
+        return new(value, connection.Host, connection.Port, connection.Database, connection.Username,
+            sslMode, null, null, fallback, configuration,
+            new ConnectionRecoverySession(_connectionProbe, _connectionDiagnostics));
     }
 
     private void SetObjectExplorerVisible(bool visible)
@@ -403,6 +514,7 @@ public partial class MainWindow : Window
             foreach (var view in QueryTabs.Items.OfType<TabItem>().Select(x => x.Content).OfType<QueryTabView>().ToArray())
                 if (!await CloseDocumentAsync(view)) return;
             await _objectExplorer.DisposeAsync();
+            await DisposeRecoverySessionsAsync();
             _statusTimer.Stop();
             _shutdownApproved = true;
             Close();
@@ -420,11 +532,22 @@ public partial class MainWindow : Window
         {
             foreach (var view in views) await view.Document.DisposeAsync();
             await _objectExplorer.DisposeAsync();
+            await DisposeRecoverySessionsAsync();
         }
         catch (Exception ex)
         {
             System.Diagnostics.Trace.WriteLine($"Shell cleanup failed: {SecretRedactor.Redact(ex.Message)}");
         }
+    }
+
+    private async Task DisposeRecoverySessionsAsync()
+    {
+        foreach (var session in _recoverySessions.ToArray())
+        {
+            session.StateChanged -= RecoverySession_StateChanged;
+            await session.DisposeAsync();
+        }
+        _recoverySessions.Clear();
     }
 
     private async Task ObserveAsync(Func<Task> action)

@@ -10,11 +10,19 @@ namespace PostgreManagementStudio.Desktop;
 public partial class ConnectionDialog : Window
 {
     private readonly IConnectionProbe _probe;
+    private readonly IConnectionRecoveryDiagnostics _diagnostics;
+    private ConnectionRecoverySession? _pendingSession;
+    private bool _accepted;
 
-    public ConnectionDialog(IConnectionProbe probe, ShellConnectionInfo? current = null)
+    public ConnectionDialog(
+        IConnectionProbe probe,
+        IConnectionRecoveryDiagnostics diagnostics,
+        ShellConnectionInfo? current = null)
     {
         InitializeComponent();
         _probe = probe;
+        _diagnostics = diagnostics;
+        Closed += ConnectionDialog_Closed;
         if (current is null) return;
         HostText.Text = current.Host;
         PortText.Text = current.Port.ToString();
@@ -35,22 +43,24 @@ public partial class ConnectionDialog : Window
         {
             var (connection, configuration) = BuildConnection();
             StatusText.Text = "Connecting…";
-            var result = await _probe.TestAsync(configuration);
-            if (!result.Succeeded)
+            if (_pendingSession is not null) await _pendingSession.DisposeAsync();
+            _pendingSession = new ConnectionRecoverySession(_probe, _diagnostics);
+            var snapshot = await _pendingSession.ConnectAsync(configuration);
+            if (snapshot.State != RecoveryConnectionState.Connected)
             {
-                StatusText.Text = result.Message;
+                StatusText.Text = snapshot.Failure?.Message ?? "The connection could not be established.";
                 return;
             }
 
             Connection = connection with
             {
-                Database = result.Database ?? connection.Database,
-                Username = result.Username ?? connection.Username,
-                ServerVersion = result.ServerVersion,
-                IsEncrypted = result.IsEncrypted,
+                Database = _pendingSession.Configuration?.Profile.Database ?? connection.Database,
+                Username = _pendingSession.Configuration?.Profile.Username ?? connection.Username,
+                Configuration = configuration,
+                Session = _pendingSession,
             };
-            StatusText.Text = $"Connected to {Connection.Host}:{Connection.Port}/{Connection.Database} as {Connection.Username} in {result.Elapsed.TotalMilliseconds:N0} ms.";
-            if (closeOnSuccess) DialogResult = true;
+            StatusText.Text = $"Connected to {Connection.Host}:{Connection.Port}/{Connection.Database} as {Connection.Username}. Backend PID {snapshot.BackendProcessId?.ToString() ?? "unavailable"}.";
+            if (closeOnSuccess) { _accepted = true; DialogResult = true; }
         }
         catch (Exception ex)
         {
@@ -93,7 +103,7 @@ public partial class ConnectionDialog : Window
         };
         if (!string.IsNullOrEmpty(profile.Password)) builder["Password"] = profile.Password;
         return (new(builder.ConnectionString, profile.Host, profile.Port, profile.Database, profile.Username,
-            profile.SslMode, null, null, false), configuration);
+            profile.SslMode, null, null, false, configuration, null!), configuration);
     }
 
     private void SetBusy(bool busy)
@@ -111,6 +121,11 @@ public partial class ConnectionDialog : Window
                 return;
             }
     }
+
+    private async void ConnectionDialog_Closed(object? sender, EventArgs e)
+    {
+        if (!_accepted && _pendingSession is not null) await _pendingSession.DisposeAsync();
+    }
 }
 
 public sealed record ShellConnectionInfo(
@@ -122,7 +137,9 @@ public sealed record ShellConnectionInfo(
     Npgsql.SslMode SslMode,
     string? ServerVersion,
     bool? IsEncrypted,
-    bool IsDevelopmentFallback)
+    bool IsDevelopmentFallback,
+    EffectiveConnectionConfiguration Configuration,
+    ConnectionRecoverySession Session)
 {
     public string SafeDisplayName => $"{Username}@{Host}:{Port}";
 }

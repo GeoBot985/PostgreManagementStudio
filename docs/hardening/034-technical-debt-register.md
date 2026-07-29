@@ -96,3 +96,22 @@ New evidence-based blockers:
   expiring, failure-evicting, credential-identity-aware cache.
 - Property and dependency panels remain unreachable prototype scope; Sprint 38
   provides their shared identity/lifecycle primitives without adding features.
+
+## Sprint 41 updates
+
+- `TD-035-003` remains resolved and is extended across the reachable shell:
+  one central recovery session now controls explicit connection states,
+  generation cancellation, failure deduplication, idle health detection,
+  reconnect serialization, backend-PID replacement, and stale UI
+  reconciliation.
+- Query editors preserve SQL and completed results, reject obsolete-generation
+  callbacks, communicate transaction uncertainty, and never replay user SQL.
+- Object Explorer retains stale orientation state, blocks dead-generation
+  loading, and restores valid stable identities after reconnect.
+- Recovery diagnostics now carry logical-session and physical-generation
+  correlation with bounded redacted failure data.
+- `TD-034-006` is further reduced by native shell failure/reconnect
+  verification and live `pg_terminate_backend` coverage. Packaged UI automation
+  and elevated full-service restart automation remain.
+- `TD-034-005` (packaging) and `TD-034-017` (SDK pinning) are not Sprint 41
+  recovery requirements and remain open.

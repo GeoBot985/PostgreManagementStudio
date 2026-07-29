@@ -13,7 +13,7 @@ namespace PostgreManagementStudio.Desktop;
 
 public partial class QueryTabView : UserControl
 {
-    private readonly QueryDocument _document; private readonly DestructiveOperationGuard _destructiveOperations; private readonly ApplicationSettings _settings; private IResultSession? _session; private bool _initializing = true; private bool _isUnloaded; public event EventHandler? DirtyChanged; public event EventHandler? WorkspaceStateChanged;
+    private readonly QueryDocument _document; private readonly DestructiveOperationGuard _destructiveOperations; private readonly ApplicationSettings _settings; private IResultSession? _session; private ShellConnectionInfo? _connection; private bool _initializing = true; private bool _isUnloaded; public event EventHandler? DirtyChanged; public event EventHandler? WorkspaceStateChanged;
     private readonly BackupRestoreOperationService _backupRestore;
     private readonly PostgreSqlToolDiscoveryService _backupTools;
     private readonly BackupInspectionService _backupInspection;
@@ -22,13 +22,15 @@ public partial class QueryTabView : UserControl
     public QueryTabView(QueryDocument document, DestructiveOperationGuard destructiveOperations,
         ApplicationSettings settings, BackupRestoreOperationService backupRestore,
         PostgreSqlToolDiscoveryService backupTools, BackupInspectionService backupInspection)
-    { InitializeComponent(); _document = document; _destructiveOperations = destructiveOperations; _settings = settings; _backupRestore = backupRestore; _backupTools = backupTools; _backupInspection = backupInspection; _document.ExecutionStateChanged += Document_ExecutionStateChanged; Unloaded += async (_, _) => { _isUnloaded = true; _document.ExecutionStateChanged -= Document_ExecutionStateChanged; try { await _backupController.DisposeAsync(); } catch (Exception ex) { System.Diagnostics.Trace.WriteLine($"Query workspace cleanup failed: {SecretRedactor.Redact(ex.Message)}"); } }; SqlText.Text = document.SqlText; DatabaseText.Text = document.Database; _file = new SqlDocument { DisplayName = document.Title }; _initializing = false; UpdateCommandState(); }
+    { InitializeComponent(); _document = document; _destructiveOperations = destructiveOperations; _settings = settings; _backupRestore = backupRestore; _backupTools = backupTools; _backupInspection = backupInspection; _document.ExecutionStateChanged += Document_ExecutionStateChanged; Unloaded += async (_, _) => { _isUnloaded = true; _document.ExecutionStateChanged -= Document_ExecutionStateChanged; if (_connection is not null) _connection.Session.StateChanged -= RecoverySession_StateChanged; try { await _backupController.DisposeAsync(); } catch (Exception ex) { System.Diagnostics.Trace.WriteLine($"Query workspace cleanup failed: {SecretRedactor.Redact(ex.Message)}"); } }; SqlText.Text = document.SqlText; DatabaseText.Text = document.Database; _file = new SqlDocument { DisplayName = document.Title }; _initializing = false; UpdateCommandState(); }
 
     public QueryDocument Document => _document;
+    public ShellConnectionInfo? Connection => _connection;
     public bool IncludeActualPlan { get; set; }
     public bool HasResults => _session?.ResultSets.Count > 0;
     public bool IsExecuting => _document.IsExecuting || _backupController.CanCancel;
-    public bool CanExecute => _document.CanExecute && !_backupController.CanCancel;
+    private bool IsRecoveryConnected => _connection?.Session.Snapshot.State == RecoveryConnectionState.Connected;
+    public bool CanExecute => _document.CanExecute && IsRecoveryConnected && !_backupController.CanCancel;
     public bool CanCancel => _document.CanCancel || _backupController.CanCancel;
     public string DisplayTitle => $"{(_file.FilePath is null ? _document.Title : Path.GetFileName(_file.FilePath))}{(_document.IsDirty ? "*" : string.Empty)}";
     public string SafeToolTip => $"{(_file.FilePath ?? "Unsaved query")}{Environment.NewLine}{SafeConnectionDisplay}";
@@ -36,12 +38,16 @@ public partial class QueryTabView : UserControl
     {
         get
         {
+            if (_connection is { } connection && connection.Session.Snapshot.State != RecoveryConnectionState.Connected)
+                return $"{connection.Username}@{connection.Host}:{connection.Port}/{_document.Database} ({connection.Session.Snapshot.State})";
             if (string.IsNullOrWhiteSpace(_document.ConnectionString)) return "Disconnected";
             var value = DatabaseConnection.FromConnectionString(_document.ConnectionString);
             return $"{value.Username}@{value.Host}:{value.Port}/{_document.Database}";
         }
     }
-    public string QueryStatus => _document.Message;
+    public string QueryStatus => _document.BackendStateMayBeStale && IsRecoveryConnected
+        ? $"{_document.Message} Backend-session state may be stale."
+        : _document.Message;
     public long RowsReceived => _session?.ReceivedRowCount ?? 0;
     public long RowsAffected => _session?.RowsAffected ?? 0;
     public TimeSpan? ExecutionElapsed => _document.LastExecutionContext is not { } context
@@ -63,11 +69,54 @@ public partial class QueryTabView : UserControl
     public void ApplyConnection(ShellConnectionInfo? connection)
     {
         if (_document.IsExecuting) throw new InvalidOperationException("A running query retains its existing connection.");
-        _document.ConnectionProfileId = connection is null ? string.Empty : connection.IsDevelopmentFallback ? "environment:PMS_CONNECTION_STRING" : "interactive";
-        _document.ConnectionString = connection?.ConnectionString ?? string.Empty;
-        _document.Database = connection?.Database ?? "postgres";
+        if (_connection is not null) _connection.Session.StateChanged -= RecoverySession_StateChanged;
+        _connection = connection;
+        if (_connection is not null) _document.Database = _connection.Database;
+        if (_connection is not null) _connection.Session.StateChanged += RecoverySession_StateChanged;
+        ApplyRecoverySnapshot(connection?.Session.Snapshot);
         DatabaseText.Text = _document.Database;
         UpdateCommandState();
+    }
+
+    private void RecoverySession_StateChanged(object? sender, EventArgs e)
+    {
+        if (_isUnloaded) return;
+        if (!Dispatcher.CheckAccess()) { _ = Dispatcher.BeginInvoke(() => RecoverySession_StateChanged(sender, e)); return; }
+        ApplyRecoverySnapshot(_connection?.Session.Snapshot);
+        UpdateCommandState();
+    }
+
+    private void ApplyRecoverySnapshot(ConnectionRecoverySnapshot? snapshot)
+    {
+        if (_connection is null || snapshot is null)
+        {
+            var generation = _document.ConnectionGenerationId;
+            if (generation != Guid.Empty)
+                _document.InvalidateConnection(generation, "Disconnected from PostgreSQL.");
+            else
+            {
+                _document.ConnectionProfileId = string.Empty;
+                _document.ConnectionString = string.Empty;
+            }
+            return;
+        }
+        if (snapshot.State == RecoveryConnectionState.Connected)
+        {
+            var database = string.IsNullOrWhiteSpace(_document.Database) ? _connection.Database : _document.Database;
+            _document.ReplaceConnection(
+                _connection.IsDevelopmentFallback ? "environment:PMS_CONNECTION_STRING" : $"interactive:{snapshot.LogicalSessionId:N}",
+                _connection.ConnectionString,
+                database,
+                snapshot.GenerationId);
+            DatabaseText.Text = database;
+            return;
+        }
+        if (snapshot.State is RecoveryConnectionState.Degraded or RecoveryConnectionState.Failed
+            or RecoveryConnectionState.Disconnected or RecoveryConnectionState.Reconnecting)
+        {
+            var message = snapshot.Failure?.Message ?? $"Connection state: {snapshot.State}.";
+            _document.InvalidateConnection(snapshot.GenerationId, message);
+        }
     }
 
     public void ChangeDatabase(string database)
@@ -80,29 +129,41 @@ public partial class QueryTabView : UserControl
 
     public async Task ExecuteAsync()
     {
-        if (!_document.CanExecute) return;
+        if (!CanExecute) return;
         if (IncludeActualPlan) { await ShowPlanAsync(PlanType.Actual); return; }
         _document.SqlText = SqlText.Text; _document.Database = DatabaseText.Text; var selected = SqlText.SelectionLength > 0 ? SqlText.SelectedText : null; StatusText.Text = "Preparing"; MessagesText.Clear(); UpdateCommandState();
         try
         {
-            var session = await _document.ExecuteAsync(selected); _session = session; var output = new StringBuilder(_document.Message); ResultTabs.Items.Clear();
+            var generationToken = _connection?.Session.GenerationToken ?? CancellationToken.None;
+            var session = await _document.ExecuteAsync(selected, generationToken);
+            var output = new StringBuilder(_document.Message);
             if (session is not null)
             {
                 output.AppendLine();
                 foreach (var notice in session.Notices) output.AppendLine($"NOTICE [{notice.Severity}]: {notice.Message}");
-                for (var resultIndex = 0; resultIndex < session.ResultSets.Count; resultIndex++)
+                if (session.Status == ResultSessionStatus.Completed)
                 {
-                    var store = session.ResultSets[resultIndex];
-                    var rows = await store.GetRowsAsync(0, checked((int)store.LoadedRowCount), CancellationToken.None);
-                    ResultTabs.Items.Add(CreateResultTab(store, rows));
+                    _session = session;
+                    ResultTabs.Items.Clear();
+                    for (var resultIndex = 0; resultIndex < session.ResultSets.Count; resultIndex++)
+                    {
+                        var store = session.ResultSets[resultIndex];
+                        var rows = await store.GetRowsAsync(0, checked((int)store.LoadedRowCount), generationToken);
+                        ResultTabs.Items.Add(CreateResultTab(store, rows));
+                    }
+                    if (session.WasTruncated) output.AppendLine($"Results truncated: displaying {session.RetainedRowCount:N0} of {session.ReceivedRowCount:N0} rows ({session.TruncationReason}).");
+                    else if (session.ReceivedRowCount >= _settings.ResultWarningThreshold) output.AppendLine($"Large result warning: {session.ReceivedRowCount:N0} rows were loaded.");
                 }
-                if (session.WasTruncated) output.AppendLine($"Results truncated: displaying {session.RetainedRowCount:N0} of {session.ReceivedRowCount:N0} rows ({session.TruncationReason}).");
-                else if (session.ReceivedRowCount >= _settings.ResultWarningThreshold) output.AppendLine($"Large result warning: {session.ReceivedRowCount:N0} rows were loaded.");
                 if (session.ResultSets.Count > 0) ResultSummary.Text = string.Join(" | ", session.ResultSets.Select((s, i) => $"Results {i + 1}: {s.LoadedRowCount:N0} displayed / {s.FinalRowCount:N0} received · {s.Schema.Columns.Count} columns"));
                 HighlightErrorPosition(session.Error, selected);
+                if (session.Status == ResultSessionStatus.Failed && session.Error?.Kind == DatabaseErrorKind.ConnectionLost)
+                    _connection?.Session.ReportFailure(
+                        DatabaseFailureClassifier.FromSqlState(session.Error.SqlState, session.Error.Message));
+                if (session.Status != ResultSessionStatus.Completed)
+                    await session.DisposeAsync();
             }
             MessagesText.Text = output.ToString();
-            OutputTabs.SelectedIndex = session?.ResultSets.Count > 0 ? 0 : 1;
+            OutputTabs.SelectedIndex = session?.Status == ResultSessionStatus.Completed && session.ResultSets.Count > 0 ? 0 : 1;
             StatusText.Text = _document.LastExecutionContext is { } context ? $"{_document.State} · {context.ServerIdentity} / {context.Database}" : _document.State.ToString();
         }
         catch (Exception ex) { StatusText.Text = "Error"; MessagesText.Text = SecretRedactor.Redact(ex.Message); }
@@ -122,7 +183,7 @@ public partial class QueryTabView : UserControl
     }
     private void UpdateCommandState()
     {
-        ExecuteButton.IsEnabled = _document.CanExecute;
+        ExecuteButton.IsEnabled = CanExecute;
         CancelButton.IsEnabled = _document.CanCancel || _backupController.CanCancel;
         DatabaseText.IsEnabled = !_document.IsExecuting && !_backupController.CanCancel;
         if (_document.IsExecuting) StatusText.Text = _document.Message;
@@ -183,7 +244,9 @@ public partial class QueryTabView : UserControl
         var dialog = new SaveFileDialog
         {
             Filter = "PostgreSQL custom backup (*.backup)|*.backup|Plain SQL (*.sql)|*.sql|Tar archive (*.tar)|*.tar",
-            DefaultExt = ".backup", AddExtension = true, FileName = "database.backup",
+            DefaultExt = ".backup",
+            AddExtension = true,
+            FileName = "database.backup",
         };
         if (dialog.ShowDialog() != true) return;
         try
@@ -272,9 +335,9 @@ public partial class QueryTabView : UserControl
     public async Task SearchObjectsAsync() { var dialog = new InputDialog("Search database objects", "Name or wildcard:"); if (dialog.ShowDialog() != true || string.IsNullOrWhiteSpace(dialog.Value)) return; try { var batch = await new NpgsqlObjectSearchService().SearchAsync(CurrentConnectionString(), new ObjectSearchOptions(dialog.Value)); ResultSummary.Text = $"Found {batch.Results.Count:N0} objects in {batch.Duration.TotalMilliseconds:N0} ms"; MessagesText.Text = string.Join(Environment.NewLine, batch.Results.Select(x => $"{x.ObjectType} {x.Schema}.{x.ObjectName}")); if (batch.Warnings.Count > 0) MessagesText.AppendText(Environment.NewLine + string.Join(Environment.NewLine, batch.Warnings)); StatusText.Text = batch.LimitReached ? "Search limit reached." : "Search complete."; OutputTabs.SelectedIndex = 1; } catch (OperationCanceledException) { StatusText.Text = "Search cancelled."; } catch (Exception ex) { MessagesText.Text = SecretRedactor.Redact(ex.Message); StatusText.Text = "Search unavailable."; OutputTabs.SelectedIndex = 1; } }
     public Task ShowEstimatedPlanAsync() => ShowPlanAsync(PlanType.Estimated);
     private async Task ShowPlanAsync(PlanType type) { var sql = SqlText.SelectionLength > 0 ? SqlText.SelectedText : SqlText.Text; if (type == PlanType.Actual && !_destructiveOperations.Confirm(new(DestructiveOperationKind.ActualExecutionPlan, "Confirm actual execution plan", DatabaseText.Text, "Actual plan analysis executes the selected SQL; data changes, locks, triggers, and external side effects are possible.", "Use read-only SQL or an explicit transaction with rollback when possible."))) return; try { var request = new ExplainRequest(sql, new(type, Buffers: type == PlanType.Actual, StatementTimeout: type == PlanType.Actual ? TimeSpan.FromSeconds(30) : null)); var plan = await new NpgsqlExecutionPlanService().ExplainAsync(CurrentConnectionString(), request); var summary = PlanMetricsService.Summarize(plan); ResultSummary.Text = $"{type} plan: {summary.NodeCount} nodes · Cost {summary.TotalCost} · Rows {summary.RootRows} · Actual {summary.ActualRows}"; MessagesText.Text = plan.RawJson; PlanTabs.Items.Clear(); PlanTabs.Items.Add(CreatePlanTab(plan)); OutputTabs.SelectedIndex = 2; StatusText.Text = "Execution plan complete."; } catch (Exception ex) { MessagesText.Text = SecretRedactor.Redact(ex.Message); OutputTabs.SelectedIndex = 1; StatusText.Text = "Execution plan unavailable."; } finally { WorkspaceStateChanged?.Invoke(this, EventArgs.Empty); } }
-    private string CurrentConnectionString() => !string.IsNullOrWhiteSpace(_document.ConnectionString)
+    private string CurrentConnectionString() => IsRecoveryConnected && !string.IsNullOrWhiteSpace(_document.ConnectionString)
         ? _document.ConnectionString
-        : throw new InvalidOperationException("This query is disconnected. Use File > Connect or Query > Change Connection.");
+        : throw new InvalidOperationException("This query is disconnected or degraded. Reconnect before running database operations.");
     private TabItem CreatePlanTab(ExecutionPlanDocument plan)
     { var panel = new DockPanel(); var raw = new TextBox { Text = plan.RawJson, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.NoWrap, FontFamily = new System.Windows.Media.FontFamily("Consolas"), VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, Height = 180 }; DockPanel.SetDock(raw, Dock.Bottom); panel.Children.Add(raw); var tree = new TreeView { Margin = new Thickness(4) }; tree.Items.Add(CreatePlanTreeNode(plan.Root, "root")); panel.Children.Add(tree); return new TabItem { Header = "Execution Plan", Content = panel, Tag = plan }; }
     private static TreeViewItem CreatePlanTreeNode(ExecutionPlanNode node, string path)

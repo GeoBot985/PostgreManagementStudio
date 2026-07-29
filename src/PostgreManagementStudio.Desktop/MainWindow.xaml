@@ -9,6 +9,7 @@
     <Menu x:Name="MainMenu" DockPanel.Dock="Top" AutomationProperties.Name="Main menu">
       <MenuItem Header="_File">
         <MenuItem Header="_Connect…" Command="{x:Static local:ShellCommands.Connect}"/>
+        <MenuItem Header="_Reconnect" Command="{x:Static local:ShellCommands.Reconnect}"/>
         <MenuItem Header="_Disconnect" Command="{x:Static local:ShellCommands.Disconnect}"/>
         <Separator/>
         <MenuItem Header="_New Query" Command="{x:Static local:ShellCommands.NewQuery}" InputGestureText="Ctrl+N"/>
@@ -93,6 +94,7 @@
         <Button Command="{x:Static local:ShellCommands.Save}" ToolTip="Save (Ctrl+S)" AutomationProperties.Name="Save query"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE74E;"/></Button>
         <Separator/>
         <Button Command="{x:Static local:ShellCommands.RefreshObjectExplorer}" ToolTip="Refresh Object Explorer" AutomationProperties.Name="Refresh Object Explorer"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE72C;"/></Button>
+        <Button Command="{x:Static local:ShellCommands.Reconnect}" ToolTip="Reconnect to PostgreSQL" AutomationProperties.Name="Reconnect"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE72C;"/></Button>
       </ToolBar>
       <ToolBar Band="1" BandIndex="0" Header="Query">
         <Button x:Name="ConnectionButton" Command="{x:Static local:ShellCommands.ChangeConnection}" MinWidth="150"
@@ -141,7 +143,7 @@
       <Border x:Name="ObjectExplorerPane" BorderBrush="#B8B8B8" BorderThickness="0,0,1,0">
         <DockPanel>
           <Border DockPanel.Dock="Top" Background="#F3F3F3" BorderBrush="#D0D0D0" BorderThickness="0,0,0,1" Padding="8,5">
-            <TextBlock Text="Object Explorer" FontWeight="SemiBold"/>
+            <TextBlock x:Name="ObjectExplorerHeader" Text="Object Explorer" FontWeight="SemiBold"/>
           </Border>
           <TreeView x:Name="ObjectExplorerTree">
             <TreeView.ContextMenu>

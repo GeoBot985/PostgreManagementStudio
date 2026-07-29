@@ -285,6 +285,8 @@ public sealed class HardenedMetadataService(
         LoadAsync(context, null, MetadataOperation.LoadRoot, controller, refresh,
             token => provider.LoadRootAsync(context, token), cancellationToken);
 
+    public void Invalidate(ObjectMetadataContext context) => cache.Invalidate(context);
+
     public Task<MetadataLoadResult<ObjectMetadataBatch>> LoadChildrenAsync(
         ObjectMetadataContext context,
         PostgresObjectIdentity parent,

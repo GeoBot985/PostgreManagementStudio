@@ -10,6 +10,7 @@ public sealed class QueryDocument : IAsyncDisposable
     private readonly IQueryExecutionTelemetry _telemetry;
     private CancellationTokenSource? _cancellation;
     private Task<IResultSession?>? _activeExecution;
+    private Guid _connectionGenerationId;
     private int _disposed;
 
     public QueryDocument(ResultExecutionService executionService, string title, IQueryExecutionTelemetry? telemetry = null)
@@ -26,7 +27,10 @@ public sealed class QueryDocument : IAsyncDisposable
     public string ConnectionProfileId { get; set; } = "environment:PMS_CONNECTION_STRING";
     public string ConnectionString { get; set; } = string.Empty;
     public string Database { get; set; } = "postgres";
+    public Guid ConnectionGenerationId { get { lock (_gate) return _connectionGenerationId; } }
     public QueryTransactionMode TransactionMode { get; set; }
+    public QueryTransactionRecoveryState TransactionRecoveryState { get; private set; }
+    public bool BackendStateMayBeStale { get; private set; }
     public TimeSpan CommandTimeout { get; set; } = TimeSpan.FromSeconds(30);
     public TimeSpan CancellationTimeout { get; set; } = TimeSpan.FromSeconds(5);
     public bool IsDirty { get; private set; }
@@ -40,6 +44,60 @@ public sealed class QueryDocument : IAsyncDisposable
 
     public void MarkDirty(bool dirty = true) => IsDirty = dirty;
 
+    public void ReplaceConnection(
+        string connectionProfileId,
+        string connectionString,
+        string database,
+        Guid generationId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(connectionProfileId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+        ArgumentException.ThrowIfNullOrWhiteSpace(database);
+        if (generationId == Guid.Empty) throw new ArgumentException("A successful physical connection generation is required.", nameof(generationId));
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+            var generationChanged = _connectionGenerationId != Guid.Empty && _connectionGenerationId != generationId;
+            ConnectionProfileId = connectionProfileId;
+            ConnectionString = connectionString;
+            Database = database.Trim();
+            _connectionGenerationId = generationId;
+            BackendStateMayBeStale |= generationChanged;
+            TransactionMode = QueryTransactionMode.Implicit;
+            if (!_lifecycle.IsActive && _lifecycle.State != QueryDocumentExecutionState.Idle) _lifecycle.Reset();
+            Message = generationChanged
+                ? "Reconnected. Backend-session state is stale and must be re-established."
+                : "Connected.";
+        }
+        RaiseStateChanged();
+    }
+
+    public bool InvalidateConnection(
+        Guid generationId,
+        string failureMessage,
+        TransactionFailureWindow failureWindow = TransactionFailureWindow.DuringCommandExecution)
+    {
+        CancellationTokenSource? cancellation;
+        lock (_gate)
+        {
+            if (generationId == Guid.Empty || generationId != _connectionGenerationId) return false;
+            var transaction = TransactionRecoveryPolicy.Assess(
+                TransactionMode == QueryTransactionMode.UserManaged,
+                failureWindow);
+            TransactionRecoveryState = transaction.State;
+            TransactionMode = QueryTransactionMode.Implicit;
+            BackendStateMayBeStale = true;
+            ConnectionString = string.Empty;
+            cancellation = _cancellation;
+            if (_lifecycle.ExecutionId is { } executionId && _lifecycle.IsActive)
+                _lifecycle.Finish(executionId, QueryDocumentExecutionState.ConnectionLost);
+            Message = $"{SecretRedactor.Redact(failureMessage)} {transaction.Message}";
+        }
+        cancellation?.Cancel();
+        RaiseStateChanged();
+        return true;
+    }
+
     public Task<IResultSession?> ExecuteAsync(string? selectedSql = null, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -52,6 +110,7 @@ public sealed class QueryDocument : IAsyncDisposable
             if (_lifecycle.State != QueryDocumentExecutionState.Idle) _lifecycle.Reset();
 
             var executionId = _lifecycle.Prepare();
+            var connectionGenerationId = _connectionGenerationId;
             var startedAt = DateTimeOffset.UtcNow;
             var connectionString = QueryExecutionContextFactory.ResolveConnectionString(ConnectionString, Database);
             var context = QueryExecutionContextFactory.Capture(
@@ -71,7 +130,7 @@ public sealed class QueryDocument : IAsyncDisposable
             _cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             LastExecutionContext = context;
             Message = "Preparing query execution…";
-            _activeExecution = RunExecutionAsync(context, connectionString, options, _cancellation);
+            _activeExecution = RunExecutionAsync(context, connectionString, options, connectionGenerationId, _cancellation);
             RaiseStateChanged();
             return _activeExecution;
         }
@@ -128,6 +187,7 @@ public sealed class QueryDocument : IAsyncDisposable
         QueryExecutionContextSnapshot context,
         string connectionString,
         QueryExecutionOptions options,
+        Guid connectionGenerationId,
         CancellationTokenSource cancellation)
     {
         IResultSession? session = null;
@@ -139,10 +199,23 @@ public sealed class QueryDocument : IAsyncDisposable
             RaiseStateChanged();
 
             var prior = Session;
-            if (prior is not null) await prior.DisposeAsync().ConfigureAwait(false);
             session = await _executionService.ExecuteAndBuildAsync(
                 new QueryRequest(context.Sql, connectionString, options),
                 cancellation.Token).ConfigureAwait(false);
+
+            bool obsoleteGeneration;
+            lock (_gate)
+            {
+                obsoleteGeneration = _connectionGenerationId != connectionGenerationId;
+                if (obsoleteGeneration)
+                    Message = "An obsolete connection generation completed after reconnection; its result was ignored.";
+            }
+            if (obsoleteGeneration)
+            {
+                await session.DisposeAsync().ConfigureAwait(false);
+                session = null;
+                return null;
+            }
 
             cancellationRequested = cancellation.IsCancellationRequested;
             var terminal = session.Status switch
@@ -155,7 +228,12 @@ public sealed class QueryDocument : IAsyncDisposable
             };
             if (_lifecycle.Finish(context.ExecutionId, terminal))
             {
-                Session = session;
+                if (terminal == QueryDocumentExecutionState.Completed)
+                {
+                    Session = session;
+                    if (prior is not null && !ReferenceEquals(prior, session))
+                        await prior.DisposeAsync().ConfigureAwait(false);
+                }
                 Message = BuildMessage(session, context);
             }
             else
@@ -221,6 +299,18 @@ public sealed class QueryDocument : IAsyncDisposable
         return $"Command completed successfully against {target}. {session.ReceivedRowCount:N0} rows received; {session.RowsAffected:N0} rows affected.{truncation} Execution time: {session.Elapsed}.";
     }
 
-    private void RaiseStateChanged() => ExecutionStateChanged?.Invoke(this, EventArgs.Empty);
+    private void RaiseStateChanged()
+    {
+        if (ExecutionStateChanged is not { } subscribers) return;
+        foreach (EventHandler subscriber in subscribers.GetInvocationList())
+        {
+            try { subscriber(this, EventArgs.Empty); }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.WriteLine(
+                    $"query_state_subscriber_failed subscriber={subscriber.Method.DeclaringType?.FullName}.{subscriber.Method.Name} type={ex.GetType().FullName}");
+            }
+        }
+    }
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 }

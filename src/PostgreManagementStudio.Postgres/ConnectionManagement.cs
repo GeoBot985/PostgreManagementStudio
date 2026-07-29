@@ -303,7 +303,8 @@ public sealed record ConnectionTestResult(
     TimeSpan Elapsed,
     ConnectionFailureCategory? FailureCategory,
     string Message,
-    string? SqlState = null);
+    string? SqlState = null,
+    int? BackendProcessId = null);
 
 public interface IConnectionProbe
 {
@@ -325,14 +326,15 @@ public sealed class NpgsqlConnectionProbe(INpgsqlConnectionFactory? factory = nu
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
             await using var command = new NpgsqlCommand("""
                 SELECT current_database(), current_user, version(),
-                       COALESCE((SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()), false)
+                       COALESCE((SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()), false),
+                       pg_backend_pid()
                 """, connection);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
             if (!await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
                 throw new NpgsqlException("PostgreSQL returned no validation row.");
             var encrypted = reader.GetBoolean(3);
             var verified = encrypted && testProfile.SslMode is SslMode.VerifyCA or SslMode.VerifyFull;
-            return new(true, configuration.Profile.Id, reader.GetString(2), reader.GetString(0), reader.GetString(1), encrypted, verified, Stopwatch.GetElapsedTime(started), null, "Connection validated successfully.");
+            return new(true, configuration.Profile.Id, reader.GetString(2), reader.GetString(0), reader.GetString(1), encrypted, verified, Stopwatch.GetElapsedTime(started), null, "Connection validated successfully.", BackendProcessId: reader.GetInt32(4));
         }
         catch (Exception ex)
         {

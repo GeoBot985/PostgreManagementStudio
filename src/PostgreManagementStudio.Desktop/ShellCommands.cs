@@ -9,6 +9,7 @@ public static class ShellCommands
 
     public static RoutedUICommand NewQuery { get; } = Create("New Query", nameof(NewQuery), new KeyGesture(Key.N, ModifierKeys.Control));
     public static RoutedUICommand Connect { get; } = Create("Connect", nameof(Connect));
+    public static RoutedUICommand Reconnect { get; } = Create("Reconnect", nameof(Reconnect));
     public static RoutedUICommand Disconnect { get; } = Create("Disconnect", nameof(Disconnect));
     public static RoutedUICommand ChangeConnection { get; } = Create("Change Connection", nameof(ChangeConnection));
     public static RoutedUICommand OpenFile { get; } = Create("Open File", nameof(OpenFile), new KeyGesture(Key.O, ModifierKeys.Control));

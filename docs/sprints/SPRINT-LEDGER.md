@@ -42,3 +42,4 @@
 | Sprint 038 | Object Browser and Metadata Hardening | Complete with lazy OID-based loading, stale-safe refresh, bounded caches, permissions, and live catalog coverage |
 | Sprint 039 | Backup, Restore, and Data-Safety Hardening | Complete with hardened tool trust, targeting, credentials, output, cancellation, confirmation, and live disposable restore coverage |
 | Sprint 040 | Traditional Application Shell and Workflow Reachability | Complete with native menus, overflow toolbars, shared commands, interactive session connection, safe per-tab context, close lifecycle, output panes, status bar, and desktop reachability tests |
+| Sprint 041 | Database Failure Recovery and State Reconciliation | Complete with central recovery lifecycle, failure classification, generation cancellation, explicit reconnect, stale-state reconciliation, transaction safety, bounded retry, live backend termination, and full release regression |

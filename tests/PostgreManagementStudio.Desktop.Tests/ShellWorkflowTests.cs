@@ -94,6 +94,10 @@ public sealed class ShellWorkflowTests
             Assert.All(commandSources, source => Assert.Same(ShellCommands.Execute, source.Command));
             var developmentFallbackConfigured =
                 !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("PMS_CONNECTION_STRING"));
+            if (developmentFallbackConfigured)
+                PumpDispatcherUntil(
+                    () => ShellCommands.Execute.CanExecute(null, window),
+                    TimeSpan.FromSeconds(5));
             Assert.Equal(developmentFallbackConfigured, ShellCommands.Execute.CanExecute(null, window));
             Assert.False(ShellCommands.CopyResults.CanExecute(null, window));
         });
@@ -146,6 +150,16 @@ public sealed class ShellWorkflowTests
         thread.Start();
         Assert.True(thread.Join(TimeSpan.FromSeconds(15)), "WPF shell test timed out.");
         Assert.Null(failure);
+    }
+
+    private static void PumpDispatcherUntil(Func<bool> condition, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (!condition() && DateTime.UtcNow < deadline)
+        {
+            Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.Background);
+            Thread.Sleep(10);
+        }
     }
 
     private static IEnumerable<DependencyObject> LogicalDescendants(DependencyObject root)

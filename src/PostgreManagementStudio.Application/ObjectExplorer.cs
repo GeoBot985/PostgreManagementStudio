@@ -42,6 +42,7 @@ public sealed class ObjectExplorerNode : IAsyncDisposable
     public PostgresObjectIdentity Identity { get; }
     public bool HasChildren { get; private set; }
     public bool IsLoaded { get; private set; }
+    public bool IsStale { get; private set; }
     public bool IsLoading => Request.State is MetadataRequestState.Queued or MetadataRequestState.Loading
         or MetadataRequestState.Refreshing or MetadataRequestState.Cancelling;
     public MetadataRequestState State => Request.State;
@@ -86,6 +87,7 @@ public sealed class ObjectExplorerNode : IAsyncDisposable
             removed = existing.Values.Where(x => !reconciled.Contains(x)).ToList();
             _children = reconciled;
             IsLoaded = true;
+            IsStale = false;
             Error = null;
         }
         foreach (var node in removed)
@@ -98,6 +100,29 @@ public sealed class ObjectExplorerNode : IAsyncDisposable
     }
 
     public void Cancel() => Request.Cancel();
+
+    internal void MarkStale()
+    {
+        ObjectExplorerNode[] children;
+        lock (_gate)
+        {
+            IsStale = true;
+            children = _children.ToArray();
+        }
+        Request.Cancel();
+        foreach (var child in children) child.MarkStale();
+    }
+
+    internal void ClearStale()
+    {
+        ObjectExplorerNode[] children;
+        lock (_gate)
+        {
+            IsStale = false;
+            children = _children.ToArray();
+        }
+        foreach (var child in children) child.ClearStale();
+    }
 
     public async ValueTask DisposeAsync()
     {
@@ -127,6 +152,8 @@ public sealed class ObjectExplorerService : IAsyncDisposable, IDisposable
     private readonly HardenedMetadataService _metadata;
     private ObjectMetadataContext? _context;
     private ObjectExplorerNode? _root;
+    private bool _isStale;
+    private Guid _connectionGenerationId;
     private readonly SemaphoreSlim _refreshConcurrency = new(4, 4);
     private int _disposed;
 
@@ -137,18 +164,28 @@ public sealed class ObjectExplorerService : IAsyncDisposable, IDisposable
         : this(new HardenedMetadataService(provider, cache ?? new BoundedMetadataCache(), diagnostics)) { }
 
     public ObjectExplorerService(HardenedMetadataService metadata) => _metadata = metadata;
+    public bool IsStale => _isStale;
+    public ObjectExplorerNode? CurrentRoot => _root;
 
     public async Task<ObjectExplorerNode> LoadRootAsync(
         string connectionString,
         string database,
         bool showSystemObjects = false,
         bool refresh = false,
+        Guid connectionGenerationId = default,
         CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
         ArgumentException.ThrowIfNullOrWhiteSpace(database);
         var context = BuildContext(connectionString, database, showSystemObjects);
+        if (_connectionGenerationId != Guid.Empty && connectionGenerationId != Guid.Empty
+            && _connectionGenerationId != connectionGenerationId)
+        {
+            if (_context is not null) _metadata.Invalidate(_context);
+            refresh = true;
+        }
+        if (connectionGenerationId != Guid.Empty) _connectionGenerationId = connectionGenerationId;
         if (_context is not null && (_context.ConfigurationIdentity != context.ConfigurationIdentity
             || _context.Database != context.Database || _context.ShowSystemObjects != context.ShowSystemObjects))
         {
@@ -169,6 +206,8 @@ public sealed class ObjectExplorerService : IAsyncDisposable, IDisposable
                 rootData.DatabaseIdentity, true, true, request: controller);
         }
         _root.ApplyChildren(rootData.Schemas.Select(ToNode));
+        _root.ClearStale();
+        _isStale = false;
         if (refresh)
             await RefreshLoadedDescendantsAsync(_root, cancellationToken).ConfigureAwait(false);
         return _root;
@@ -191,6 +230,8 @@ public sealed class ObjectExplorerService : IAsyncDisposable, IDisposable
         CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        if (_isStale || node.IsStale)
+            throw new InvalidOperationException("Object Explorer metadata is stale. Reconnect and refresh before loading more objects.");
         if (!refresh && node.IsLoaded) return Task.FromResult(node);
         if (!refresh && node.ActiveLoad is { } active) return active;
         var task = ExpandCoreAsync(node, refresh, cancellationToken);
@@ -298,12 +339,24 @@ public sealed class ObjectExplorerService : IAsyncDisposable, IDisposable
         if (_root is not null) await _root.DisposeAsync();
         _root = null;
         _context = null;
+        _connectionGenerationId = Guid.Empty;
         _refreshConcurrency.Dispose();
+    }
+
+    public void MarkStale()
+    {
+        if (_isStale) return;
+        _isStale = true;
+        if (_context is not null) _metadata.Invalidate(_context);
+        _root?.MarkStale();
     }
 
     public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
 
-    private static ObjectMetadataContext BuildContext(string connectionString, string database, bool showSystemObjects)
+    private static ObjectMetadataContext BuildContext(
+        string connectionString,
+        string database,
+        bool showSystemObjects)
     {
         var identity = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(connectionString)));
         return new()

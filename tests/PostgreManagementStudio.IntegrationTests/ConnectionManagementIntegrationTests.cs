@@ -202,6 +202,47 @@ public sealed class ConnectionManagementIntegrationTests
         NpgsqlConnectionFactory.Shared.ClearPool(configuration);
     }
 
+    [PostgreSqlFact]
+    public async Task BackendTerminationDegradesLogicalSessionAndExplicitReconnectRestoresWork()
+    {
+        var configuration = Configuration("Recovery Backend Termination", builder =>
+        {
+            builder.Pooling = false;
+            builder.Timeout = 5;
+        });
+        await using var recovery = new ConnectionRecoverySession(new NpgsqlConnectionProbe());
+        var connected = await recovery.ConnectAsync(configuration);
+        Assert.Equal(RecoveryConnectionState.Connected, connected.State);
+        var oldGenerationToken = recovery.GenerationToken;
+
+        await using var victim = NpgsqlConnectionFactory.Shared.Create(configuration);
+        await victim.OpenAsync();
+        var victimPid = victim.ProcessID;
+        await using (var terminator = new NpgsqlConnection(ConnectionString))
+        {
+            await terminator.OpenAsync();
+            var termination = await new NpgsqlCommand("SELECT pg_terminate_backend(@pid)", terminator)
+            { Parameters = { new("pid", victimPid) } }.ExecuteScalarAsync();
+            Assert.True((bool)termination!);
+        }
+
+        var exception = await Assert.ThrowsAnyAsync<NpgsqlException>(() =>
+            new NpgsqlCommand("SELECT 41", victim).ExecuteScalarAsync());
+        recovery.ReportFailure(exception);
+        Assert.Equal(RecoveryConnectionState.Degraded, recovery.Snapshot.State);
+        Assert.True(oldGenerationToken.IsCancellationRequested);
+
+        var reconnected = await recovery.ReconnectAsync();
+        Assert.Equal(RecoveryConnectionState.Connected, reconnected.State);
+        Assert.NotEqual(connected.GenerationId, reconnected.GenerationId);
+        Assert.NotNull(reconnected.BackendProcessId);
+        Assert.Contains("must be re-established", reconnected.StaleStateWarning);
+
+        await using var verified = NpgsqlConnectionFactory.Shared.Create(configuration);
+        await verified.OpenAsync();
+        Assert.Equal(42, await new NpgsqlCommand("SELECT 42", verified).ExecuteScalarAsync());
+    }
+
     private static class InterlockedExtensions
     {
         public static void Max(ref int target, int value)
