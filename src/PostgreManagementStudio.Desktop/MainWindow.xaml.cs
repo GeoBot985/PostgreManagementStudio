@@ -143,7 +143,14 @@ public partial class MainWindow : Window
     }
 
     private static string AssemblyVersionText() =>
-        System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "0.0.0";
+        (System.Reflection.Assembly.GetEntryAssembly()?
+            .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
+            .Select(attribute => attribute.InformationalVersion)
+            .FirstOrDefault(version => !string.IsNullOrWhiteSpace(version))?
+            .Split('+')[0])
+        ?? System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3)
+        ?? "0.0.0";
 
     private ShellCommandState State => new(
         ActiveView is not null,
@@ -371,10 +378,15 @@ public partial class MainWindow : Window
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
-        if (await RestoreWorkspaceAsync()) return;
-        if (_defaultConnection is null) return;
-        TrackConnection(_defaultConnection);
-        await _defaultConnection.Session.ConnectAsync(_defaultConnection.Configuration);
+        await ObserveAsync(async () =>
+        {
+            if (await RestoreWorkspaceAsync()) return;
+            if (_defaultConnection is null) return;
+            TrackConnection(_defaultConnection);
+            await _defaultConnection.Session.ConnectAsync(_defaultConnection.Configuration);
+        });
+        UpdateShellState();
+        CommandManager.InvalidateRequerySuggested();
     }
 
     private async Task<bool> RestoreWorkspaceAsync()
@@ -395,12 +407,15 @@ public partial class MainWindow : Window
 
     private async void QueryTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (QueryTabs.SelectedItem is TabItem { Tag: QueryDocument doc }) _tabs.Activate(doc);
-        ActualPlanButton.IsChecked = ActiveView?.IncludeActualPlan == true;
-        UpdateShellState();
-        CommandManager.InvalidateRequerySuggested();
-        if (CurrentObjectExplorerContext() != _objectExplorerContext)
-            await RefreshObjectExplorerAsync();
+        await ObserveAsync(async () =>
+        {
+            if (QueryTabs.SelectedItem is TabItem { Tag: QueryDocument doc }) _tabs.Activate(doc);
+            ActualPlanButton.IsChecked = ActiveView?.IncludeActualPlan == true;
+            UpdateShellState();
+            CommandManager.InvalidateRequerySuggested();
+            if (CurrentObjectExplorerContext() != _objectExplorerContext)
+                await RefreshObjectExplorerAsync();
+        });
     }
 
     private void DatabaseSelector_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
@@ -473,6 +488,8 @@ public partial class MainWindow : Window
     private async void RecoverySession_StateChanged(object? sender, EventArgs e)
     {
         if (sender is not ConnectionRecoverySession session) return;
+        try
+        {
         if (!Dispatcher.CheckAccess())
         {
             _ = Dispatcher.BeginInvoke(() => RecoverySession_StateChanged(sender, e));
@@ -501,6 +518,19 @@ public partial class MainWindow : Window
         }
         UpdateShellState();
         CommandManager.InvalidateRequerySuggested();
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.WriteLine(
+                $"Connection state UI update failed: {SecretRedactor.Redact(ex.Message)}");
+            if (Dispatcher.CheckAccess())
+            {
+                MarkObjectExplorerStale("Connection state changed. Reconnect or refresh Object Explorer.");
+                UpdateShellState();
+                CommandManager.InvalidateRequerySuggested();
+            }
+        }
     }
 
     private void MarkObjectExplorerStale(string message)

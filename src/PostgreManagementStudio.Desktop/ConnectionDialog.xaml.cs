@@ -144,9 +144,16 @@ public partial class ConnectionDialog : Window
 
     private async void ConnectionDialog_Loaded(object sender, RoutedEventArgs e)
     {
-        if (_persistedProfile is not null) return;
-        var profile = (await _profiles.LoadAsync()).FirstOrDefault();
-        if (profile is not null) ApplyProfile(profile);
+        try
+        {
+            if (_persistedProfile is not null) return;
+            var profile = (await _profiles.LoadAsync()).FirstOrDefault();
+            if (profile is not null) ApplyProfile(profile);
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = DesktopErrorPresentation.Failure("Saved connection profile loading", ex);
+        }
     }
 
     private void ApplyProfile(ConnectionProfile profile)
@@ -190,12 +197,20 @@ public partial class ConnectionDialog : Window
     private async void DeletePassword_Click(object sender, RoutedEventArgs e)
     {
         if (_persistedProfile is null || string.IsNullOrWhiteSpace(_persistedProfile.CredentialReference)) return;
-        await _credentials.DeleteAsync(_persistedProfile.CredentialReference);
-        _persistedProfile = _persistedProfile with { CredentialReference = null };
-        await _profiles.SaveAsync(_persistedProfile);
         DeletePasswordButton.IsEnabled = false;
-        SavePasswordCheck.IsChecked = false;
-        StatusText.Text = "The saved password was deleted from Windows Credential Manager.";
+        try
+        {
+            await _credentials.DeleteAsync(_persistedProfile.CredentialReference);
+            _persistedProfile = _persistedProfile with { CredentialReference = null };
+            await _profiles.SaveAsync(_persistedProfile);
+            SavePasswordCheck.IsChecked = false;
+            StatusText.Text = "The saved password was deleted from Windows Credential Manager.";
+        }
+        catch (Exception ex)
+        {
+            DeletePasswordButton.IsEnabled = true;
+            StatusText.Text = DesktopErrorPresentation.Failure("Saved password deletion", ex);
+        }
     }
 
     private static string StableProfileId(string host, int port, string database, string username)
@@ -222,7 +237,13 @@ public partial class ConnectionDialog : Window
 
     private async void ConnectionDialog_Closed(object? sender, EventArgs e)
     {
-        if (!_accepted && _pendingSession is not null) await _pendingSession.DisposeAsync();
+        if (_accepted || _pendingSession is null) return;
+        try { await _pendingSession.DisposeAsync(); }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.WriteLine(
+                $"Connection dialog cleanup failed: {SecretRedactor.Redact(ex.Message)}");
+        }
     }
 }
 

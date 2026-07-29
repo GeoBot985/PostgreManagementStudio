@@ -61,12 +61,15 @@ public partial class QueryTabView : UserControl
         _isUnloaded = true;
         _document.ExecutionStateChanged -= Document_ExecutionStateChanged;
         if (_connection is not null) _connection.Session.StateChanged -= RecoverySession_StateChanged;
-        _resultPageCancellation?.Cancel();
-        _resultPageCancellation?.Dispose();
-        await DisposeResultTabStatesAsync();
-        await _completionRequests.DisposeAsync();
-        await _searchRequests.DisposeAsync();
-        try { await _backupController.DisposeAsync(); }
+        try
+        {
+            _resultPageCancellation?.Cancel();
+            _resultPageCancellation?.Dispose();
+            await DisposeResultTabStatesAsync();
+            await _completionRequests.DisposeAsync();
+            await _searchRequests.DisposeAsync();
+            await _backupController.DisposeAsync();
+        }
         catch (Exception ex)
         {
             System.Diagnostics.Trace.WriteLine(
@@ -344,8 +347,17 @@ public partial class QueryTabView : UserControl
     private async void ResultSearch_Click(object sender, RoutedEventArgs e)
     {
         if (ResultTabs.SelectedItem is not TabItem { Tag: ResultTabState state }) return;
-        state.ViewState = state.ViewState with { Search = new(ResultSearchText.Text) };
-        await ApplyResultViewAsync(state, TimeSpan.FromMilliseconds(200));
+        try
+        {
+            state.ViewState = state.ViewState with { Search = new(ResultSearchText.Text) };
+            await ApplyResultViewAsync(state, TimeSpan.FromMilliseconds(200));
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            MessagesText.Text = DesktopErrorPresentation.Failure("Result search", ex);
+            OutputTabs.SelectedIndex = 1;
+        }
     }
     public void ShowResultSearch() { ResultSearchPanel.Visibility = Visibility.Visible; ResultSearchText.Focus(); }
     public void ShowOutput(int index) { OutputTabs.SelectedIndex = Math.Clamp(index, 0, 2); }
@@ -423,19 +435,30 @@ public partial class QueryTabView : UserControl
     private async void PreviousResultPage_Click(object sender, RoutedEventArgs e)
     {
         if (ResultTabs.SelectedItem is not TabItem { Tag: ResultTabState state } || state.Page is null) return;
-        await LoadResultPageAsync(
-            state,
-            Math.Max(0, state.Page.StartRowIndex - state.Page.PageSize),
-            _connection?.Session.GenerationToken ?? CancellationToken.None);
+        await NavigateResultPageAsync(state, Math.Max(0, state.Page.StartRowIndex - state.Page.PageSize));
     }
 
     private async void NextResultPage_Click(object sender, RoutedEventArgs e)
     {
         if (ResultTabs.SelectedItem is not TabItem { Tag: ResultTabState state } || state.Page is null) return;
-        await LoadResultPageAsync(
-            state,
-            state.Page.StartRowIndex + state.Page.PageSize,
-            _connection?.Session.GenerationToken ?? CancellationToken.None);
+        await NavigateResultPageAsync(state, state.Page.StartRowIndex + state.Page.PageSize);
+    }
+
+    private async Task NavigateResultPageAsync(ResultTabState state, long startRowIndex)
+    {
+        try
+        {
+            await LoadResultPageAsync(
+                state,
+                startRowIndex,
+                _connection?.Session.GenerationToken ?? CancellationToken.None);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            MessagesText.Text = DesktopErrorPresentation.Failure("Result page loading", ex);
+            OutputTabs.SelectedIndex = 1;
+        }
     }
 
     private void UpdateResultPageSummary(ResultTabState state)
@@ -460,13 +483,13 @@ public partial class QueryTabView : UserControl
     public async Task ExportResultsAsync()
     {
         if (_session is null || ResultTabs.SelectedIndex < 0 || ResultTabs.SelectedIndex >= _session.ResultSets.Count) return;
-        var dialog = new SaveFileDialog { Filter = "CSV (*.csv)|*.csv|TSV (*.tsv)|*.tsv|JSON (*.json)|*.json|SQL inserts (*.sql)|*.sql", DefaultExt = ".csv", AddExtension = true, FileName = "query-results" }; if (dialog.ShowDialog() != true) return; var format = dialog.FilterIndex switch { 2 => ResultExportFormat.Tsv, 3 => ResultExportFormat.Json, 4 => ResultExportFormat.SqlInsert, _ => ResultExportFormat.Csv }; try { var outcome = await new ResultExportService().ExportAsync(new ResultExportRequest(_session.ResultSets[ResultTabs.SelectedIndex], null, format, ResultExportScope.EntireResult, dialog.FileName, new()), new Progress<ResultExportProgress>(p => StatusText.Text = $"{p.Phase}: {p.RowsWritten:N0}")); StatusText.Text = outcome.Completed ? $"Exported {outcome.RowsWritten:N0} rows to {outcome.Path}" : "Export cancelled."; } catch (Exception ex) { MessagesText.Text = $"Export failed: {ex.Message}"; }
+        var dialog = new SaveFileDialog { Filter = "CSV (*.csv)|*.csv|TSV (*.tsv)|*.tsv|JSON (*.json)|*.json|SQL inserts (*.sql)|*.sql", DefaultExt = ".csv", AddExtension = true, FileName = "query-results" }; if (dialog.ShowDialog() != true) return; var format = dialog.FilterIndex switch { 2 => ResultExportFormat.Tsv, 3 => ResultExportFormat.Json, 4 => ResultExportFormat.SqlInsert, _ => ResultExportFormat.Csv }; try { var outcome = await new ResultExportService().ExportAsync(new ResultExportRequest(_session.ResultSets[ResultTabs.SelectedIndex], null, format, ResultExportScope.EntireResult, dialog.FileName, new()), new Progress<ResultExportProgress>(p => StatusText.Text = $"{p.Phase}: {p.RowsWritten:N0}")); StatusText.Text = outcome.Completed ? $"Exported {outcome.RowsWritten:N0} rows to {outcome.Path}" : "Export cancelled."; } catch (OperationCanceledException) { StatusText.Text = "Export cancelled."; } catch (Exception ex) { MessagesText.Text = DesktopErrorPresentation.Failure("Export", ex); OutputTabs.SelectedIndex = 1; }
     }
-    private void CopyGrid(bool headers) { if (ResultTabs.SelectedItem is not TabItem { Tag: ResultTabState state }) return; var grid = state.Grid; var lines = new List<string>(); if (headers) lines.Add(string.Join("\t", grid.Columns.Skip(1).Select(c => c.Header?.ToString()?.Split('\n')[0]))); foreach (var item in grid.SelectedItems.Cast<FormattedResultRow>()) lines.Add(string.Join("\t", item.Values)); if (lines.Count > 0) Clipboard.SetText(string.Join(Environment.NewLine, lines)); }
-    public async Task OpenFileAsync() { var dialog = new OpenFileDialog { Filter = "SQL files (*.sql)|*.sql|All files (*.*)|*.*", Multiselect = false }; if (dialog.ShowDialog() != true) return; try { var loaded = await _fileService.LoadAsync(dialog.FileName); _initializing = true; _file = SqlDocument.FromLoaded(loaded); SqlText.Text = _file.Text; _document.SqlText = _file.Text; _document.MarkDirty(false); _initializing = false; StatusText.Text = $"Opened {dialog.FileName}"; DirtyChanged?.Invoke(this, EventArgs.Empty); } catch (Exception ex) { _initializing = false; MessagesText.Text = ex.Message; OutputTabs.SelectedIndex = 1; } }
+    private void CopyGrid(bool headers) { if (ResultTabs.SelectedItem is not TabItem { Tag: ResultTabState state }) return; var grid = state.Grid; var lines = new List<string>(); if (headers) lines.Add(string.Join("\t", grid.Columns.Skip(1).Select(c => c.Header?.ToString()?.Split('\n')[0]))); foreach (var item in grid.SelectedItems.Cast<FormattedResultRow>()) lines.Add(string.Join("\t", item.Values)); if (lines.Count == 0) return; try { Clipboard.SetText(string.Join(Environment.NewLine, lines)); StatusText.Text = $"Copied {lines.Count - (headers ? 1 : 0):N0} rows."; } catch (Exception ex) { MessagesText.Text = DesktopErrorPresentation.Failure("Copy", ex); OutputTabs.SelectedIndex = 1; } }
+    public async Task OpenFileAsync() { var dialog = new OpenFileDialog { Filter = "SQL files (*.sql)|*.sql|All files (*.*)|*.*", Multiselect = false }; if (dialog.ShowDialog() != true) return; try { var loaded = await _fileService.LoadAsync(dialog.FileName); _initializing = true; _file = SqlDocument.FromLoaded(loaded); SqlText.Text = _file.Text; _document.SqlText = _file.Text; _document.MarkDirty(false); _initializing = false; StatusText.Text = $"Opened {dialog.FileName}"; DirtyChanged?.Invoke(this, EventArgs.Empty); } catch (OperationCanceledException) { _initializing = false; } catch (Exception ex) { _initializing = false; MessagesText.Text = DesktopErrorPresentation.Failure("Open", ex); OutputTabs.SelectedIndex = 1; } }
     public async Task<bool> SaveAsync() => _file.FilePath is null ? await SaveAsAsync() : await SaveToAsync(_file.FilePath);
     public async Task<bool> SaveAsAsync() { var dialog = new SaveFileDialog { Filter = "SQL files (*.sql)|*.sql|All files (*.*)|*.*", DefaultExt = ".sql", AddExtension = true, FileName = Path.GetFileName(_file.FilePath ?? _document.Title) }; return dialog.ShowDialog() == true && await SaveToAsync(dialog.FileName); }
-    private async Task<bool> SaveToAsync(string path) { try { _file.SetText(SqlText.Text); await _fileService.SaveAsync(_file, path); _document.MarkDirty(false); StatusText.Text = $"Saved {path}"; DirtyChanged?.Invoke(this, EventArgs.Empty); WorkspaceStateChanged?.Invoke(this, EventArgs.Empty); return true; } catch (Exception ex) { MessagesText.Text = $"Save failed: {ex.Message}"; OutputTabs.SelectedIndex = 1; return false; } }
+    private async Task<bool> SaveToAsync(string path) { try { _file.SetText(SqlText.Text); await _fileService.SaveAsync(_file, path); _document.MarkDirty(false); StatusText.Text = $"Saved {path}"; DirtyChanged?.Invoke(this, EventArgs.Empty); WorkspaceStateChanged?.Invoke(this, EventArgs.Empty); return true; } catch (OperationCanceledException) { StatusText.Text = "Save cancelled."; return false; } catch (Exception ex) { MessagesText.Text = DesktopErrorPresentation.Failure("Save", ex); OutputTabs.SelectedIndex = 1; return false; } }
     public void FindNext() { if (string.IsNullOrEmpty(FindText.Text)) return; var index = new FindReplaceService().FindNext(SqlText.Text, FindText.Text, SqlText.SelectionStart + SqlText.SelectionLength, new()); if (index >= 0) { SqlText.Select(index, FindText.Text.Length); SqlText.Focus(); } else StatusText.Text = "No match."; }
     public void ShowFind(bool includeReplace)
     {
@@ -498,10 +521,20 @@ public partial class QueryTabView : UserControl
         var version = Interlocked.Read(ref _documentVersion);
         var sql = SqlText.Text;
         var caret = SqlText.CaretIndex;
-        var result = await _completionRequests.RunAsync(
-            version,
-            TimeSpan.Zero,
-            token => new SqlCompletionEngine().GetCompletionsAsync(sql, caret, null, token));
+        LatestRequestResult<IReadOnlyList<CompletionItem>> result;
+        try
+        {
+            result = await _completionRequests.RunAsync(
+                version,
+                TimeSpan.Zero,
+                token => new SqlCompletionEngine().GetCompletionsAsync(sql, caret, null, token));
+        }
+        catch (OperationCanceledException) { return; }
+        catch (Exception ex)
+        {
+            StatusText.Text = DesktopErrorPresentation.Failure("Completion", ex);
+            return;
+        }
         if (!result.Applied || result.ContextVersion != Interlocked.Read(ref _documentVersion)
             || result.Value is null)
             return;

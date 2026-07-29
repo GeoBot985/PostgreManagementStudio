@@ -49,7 +49,7 @@ $manifest = [ordered]@{
     dirtyWorkingTree = $dirty; buildConfiguration = 'Release'; architecture = 'win-x64'
     runtimeMode = 'self-contained'; installerType = 'controlled per-user PowerShell installer over offline ZIP'
     settingsSchemaVersion = 2; workspaceSchemaVersion = 1; supportedWindows = @('Windows 11 x64')
-    supportedPostgreSql = @('PostgreSQL 14+', 'PostgreSQL 18.4 qualification passed')
+    supportedPostgreSql = @('PostgreSQL 18.4')
     packageFile = [IO.Path]::GetFileName($package); packageSha256 = $null
     testStatus = if ($SkipTests) { 'not-run-by-request' } else { 'passed-by-release-build' }
     signingStatus = 'unsigned internal candidate; ready for Authenticode signing'

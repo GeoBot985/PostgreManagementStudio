@@ -42,6 +42,18 @@ public sealed class ShellWorkflowTests
     }
 
     [Fact]
+    public void DesktopErrorPresentation_RedactsSecretsAndHandlesCancellation()
+    {
+        var failure = DesktopErrorPresentation.Failure(
+            "Connection", new InvalidOperationException("password=secret; host=localhost"));
+
+        Assert.Contains("Connection failed", failure);
+        Assert.DoesNotContain("secret", failure, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("Connection cancelled.",
+            DesktopErrorPresentation.Failure("Connection", new OperationCanceledException()));
+    }
+
+    [Fact]
     public void KeyboardBaseline_UsesTheSharedRoutedCommands()
     {
         Assert.Contains(ShellCommands.NewQuery.InputGestures.Cast<InputGesture>(), x => x is KeyGesture { Key: Key.N, Modifiers: ModifierKeys.Control });
