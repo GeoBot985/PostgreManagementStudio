@@ -26,6 +26,15 @@ synchronisation execution, and full snapshot/object coverage remain deferred.
 
 ## Corrective rule
 
+## Sprint 56 release qualification correction
+
+Sprint 56 records a conditional internal release candidate, not a public
+release. Packaging and installer lifecycle checks passed, but clean-machine,
+upgrade, broader PostgreSQL compatibility, signing/malware, and licence gates
+remain open. Release claims must use the qualified Windows 11 x64 and
+PostgreSQL 18.4 scope and must not imply that deferred settings, history,
+statistics, role, data-editing, or direct synchronisation workspaces exist.
+
 Sprint 53 composes the file-to-PostgreSQL import and retained-result-to-file
 export workflows into reusable WPF workspaces. The import surface supports
 delimited files, bounded preview, editable mappings, validation, cancellation,

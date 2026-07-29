@@ -79,3 +79,13 @@ Do not commit credentials.
 
 Integration tests requiring PostgreSQL are reported as skipped when
 `PMS_CONNECTION_STRING` is absent; they run normally when it is configured.
+
+## Release candidate
+
+The current internal candidate is a self-contained Windows 11 x64 ZIP and
+does not require .NET, Visual Studio, or PostgreSQL on the client machine.
+Install, repair, upgrade, and removal instructions are in
+`docs/release/installation-guide.md`; Sprint 56 qualification evidence is in
+`docs/release/RC_EXIT_REVIEW.md`. It is not a public-release approval: clean
+machine, upgrade, broader PostgreSQL compatibility, signing, malware-scan, and
+licence gates remain open.

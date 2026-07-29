@@ -1,5 +1,11 @@
 # Installation, upgrade, repair, and removal
 
+The Sprint 56 candidate is `PostgreManagementStudio-0.9.0-rc.3-win-x64.zip`.
+Its recorded SHA-256 is
+`22fa5b41a1952d90d5514d95efcc95b1b657169d378d6bf083f7ae4dc58b19ad`.
+This is an unsigned internal candidate pending clean-machine, upgrade,
+compatibility, signing, malware-scan, and licence gates.
+
 ## Requirements
 
 - Windows 11 x64 for the currently qualified environment.

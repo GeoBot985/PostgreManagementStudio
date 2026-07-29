@@ -97,3 +97,14 @@ finish one usable surface rather than expose another collection of buttons.
 - Acceptance: Sprint 55 shell policy is complete; administration workflows that
   remain service-only are not claimed as desktop-complete.
 - Risk: medium; the next administration workflow needs a deliberate scope.
+
+## Sprint 56 — Release-candidate hardening
+
+- Completed: reproducible release build, package verification, installer
+  install/repair/uninstall preservation test, regression baseline, upgrade
+  policy review, compatibility matrix, smoke procedure, and conditional exit
+  review.
+- Open qualification: clean-machine and display campaign, prior-version
+  upgrade, PostgreSQL 14–17 matrix, signing/malware scan, and licence approval.
+- Sprint 57 recommendation: close those release gates before expanding the
+  desktop feature surface.
