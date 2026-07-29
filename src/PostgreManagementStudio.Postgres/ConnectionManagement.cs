@@ -10,6 +10,7 @@ using Npgsql;
 namespace PostgreManagementStudio.Postgres;
 
 public enum ConnectionAuthenticationMode { Password, Integrated, ClientCertificate }
+public enum EnvironmentClassification { Local, Development, Test, Staging, Production, Custom }
 public enum ConnectionFailureCategory { Validation, Dns, Network, Timeout, Authentication, Authorisation, Ssl, ServerUnavailable, DatabaseUnavailable, PoolExhausted, Cancelled, Disposed, Unknown }
 public enum ManagedConnectionState { Disconnected, ResolvingProfile, Connecting, Connected, Disconnecting, Reconnecting, Failed, Disposed }
 
@@ -23,7 +24,12 @@ public sealed record ConnectionProfile
     public required string Username { get; init; }
     [JsonIgnore, DebuggerBrowsable(DebuggerBrowsableState.Never)]
     public string? Password { get; init; }
+    public string? CredentialReference { get; init; }
     public ConnectionAuthenticationMode AuthenticationMode { get; init; } = ConnectionAuthenticationMode.Password;
+    public EnvironmentClassification Environment { get; init; } = EnvironmentClassification.Local;
+    public string? CustomEnvironmentName { get; init; }
+    public bool IsReadOnly { get; init; }
+    public bool EnforceReadOnlyForProduction { get; init; } = true;
     public SslMode SslMode { get; init; } = SslMode.Prefer;
     public string? RootCertificate { get; init; }
     public string? ClientCertificate { get; init; }
@@ -42,7 +48,11 @@ public sealed record ConnectionProfile
     public string? SearchPath { get; init; }
     public IReadOnlyDictionary<string, string> AdvancedOptions { get; init; } = new Dictionary<string, string>();
 
-    public override string ToString() => $"{Name} ({Username}@{Host}:{Port}/{Database}, SSL={SslMode})";
+    public bool EffectiveReadOnly => IsReadOnly || (Environment == EnvironmentClassification.Production && EnforceReadOnlyForProduction);
+    public string EnvironmentDisplayName => Environment == EnvironmentClassification.Custom
+        ? CustomEnvironmentName ?? "Custom"
+        : Environment.ToString();
+    public override string ToString() => $"{Name} ({Username}@{Host}:{Port}/{Database}, {EnvironmentDisplayName}{(EffectiveReadOnly ? ", read-only" : "")}, SSL={SslMode})";
 }
 
 public sealed record ConnectionValidationError(string Field, string Message);
@@ -65,7 +75,7 @@ public static class ConnectionProfileValidator
 {
     private static readonly HashSet<string> SupportedAdvancedOptions = new(StringComparer.OrdinalIgnoreCase)
     {
-        "Options", "Tcp Keepalive", "Tcp Keepalive Time", "Tcp Keepalive Interval",
+        "Tcp Keepalive", "Tcp Keepalive Time", "Tcp Keepalive Interval",
         "Cancellation Timeout", "Max Auto Prepare", "Auto Prepare Min Usages",
         "Load Balance Hosts", "Target Session Attributes",
     };
@@ -79,6 +89,12 @@ public static class ConnectionProfileValidator
         Required(errors, nameof(profile.Host), profile.Host, 1024);
         Required(errors, nameof(profile.Database), profile.Database, 255);
         Required(errors, nameof(profile.Username), profile.Username, 255);
+        if (!string.IsNullOrWhiteSpace(profile.CredentialReference)
+            && (profile.CredentialReference.Length > 256 || profile.CredentialReference.Any(char.IsControl)))
+            errors.Add(new(nameof(profile.CredentialReference), "Credential reference is invalid."));
+        if (profile.Environment == EnvironmentClassification.Custom
+            && (string.IsNullOrWhiteSpace(profile.CustomEnvironmentName) || profile.CustomEnvironmentName.Length > 64 || ContainsControl(profile.CustomEnvironmentName)))
+            errors.Add(new(nameof(profile.CustomEnvironmentName), "A custom environment label of at most 64 characters is required."));
         if (profile.Port is < 1 or > 65535) errors.Add(new(nameof(profile.Port), "Port must be between 1 and 65535."));
         if (profile.ConnectionTimeoutSeconds is < 1 or > 120) errors.Add(new(nameof(profile.ConnectionTimeoutSeconds), "Connection timeout must be between 1 and 120 seconds."));
         if (profile.CommandTimeoutSeconds is < 1 or > 86_400) errors.Add(new(nameof(profile.CommandTimeoutSeconds), "Command timeout must be between 1 and 86400 seconds."));
@@ -132,7 +148,12 @@ public sealed class EffectiveConnectionConfiguration
     {
         Profile = profile;
         ProviderConnectionString = providerConnectionString;
-        Identity = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(providerConnectionString)));
+        var identityBuilder = new NpgsqlConnectionStringBuilder(providerConnectionString)
+        {
+            Password = null,
+            SslPassword = null,
+        };
+        Identity = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(identityBuilder.ConnectionString)));
     }
 
     public ConnectionProfile Profile { get; }
@@ -225,6 +246,7 @@ public static class EffectiveConnectionConfigurationBuilder
             SearchPath = profile.SearchPath,
             NoResetOnClose = false,
             IncludeErrorDetail = false,
+            Options = profile.EffectiveReadOnly ? "-c default_transaction_read_only=on" : null,
         };
         foreach (var option in profile.AdvancedOptions) builder[option.Key] = option.Value;
         return new(profile, builder.ConnectionString);
@@ -239,32 +261,21 @@ public static class ConnectionFailureClassifier
 {
     public static ConnectionFailureCategory Classify(Exception exception)
     {
+        var chain = ExceptionChain(exception).ToArray();
+        var postgresFailure = chain.OfType<PostgresException>().FirstOrDefault();
+        if (postgresFailure is not null) return ClassifyPostgres(postgresFailure);
         if (exception is OperationCanceledException) return ConnectionFailureCategory.Cancelled;
         if (exception is AuthenticationException) return ConnectionFailureCategory.Ssl;
         if (exception is ArgumentException argument
             && (argument.Message.Contains("certificate", StringComparison.OrdinalIgnoreCase) || argument.Message.Contains("SSL", StringComparison.OrdinalIgnoreCase)))
             return ConnectionFailureCategory.Ssl;
         if (exception is ConnectionProfileValidationException or ArgumentException) return ConnectionFailureCategory.Validation;
-        if (exception is TimeoutException || exception.InnerException is TimeoutException) return ConnectionFailureCategory.Timeout;
-        if (exception is PostgresException postgres)
-            return postgres.SqlState switch
-            {
-                "28P01" or "28000" => ConnectionFailureCategory.Authentication,
-                "42501" => ConnectionFailureCategory.Authorisation,
-                "3D000" => ConnectionFailureCategory.DatabaseUnavailable,
-                "53300" => ConnectionFailureCategory.PoolExhausted,
-                "57P01" or "57P02" or "57P03" => ConnectionFailureCategory.ServerUnavailable,
-                _ => ConnectionFailureCategory.Unknown,
-            };
-        if (exception.InnerException is PostgresException nestedPostgres)
-            return Classify(nestedPostgres);
-        if (exception is SocketException socket)
+        if (chain.Any(x => x is TimeoutException)) return ConnectionFailureCategory.Timeout;
+        if (chain.OfType<SocketException>().FirstOrDefault() is { } socket)
             return socket.SocketErrorCode is SocketError.HostNotFound or SocketError.NoData ? ConnectionFailureCategory.Dns : ConnectionFailureCategory.Network;
-        if (exception.InnerException is SocketException innerSocket)
-            return innerSocket.SocketErrorCode is SocketError.HostNotFound or SocketError.NoData ? ConnectionFailureCategory.Dns : ConnectionFailureCategory.Network;
         if (exception is NpgsqlException npgsql)
         {
-            var message = npgsql.Message;
+            var message = string.Join(" ", chain.Select(x => x.Message));
             if (message.Contains("certificate", StringComparison.OrdinalIgnoreCase) || message.Contains("SSL", StringComparison.OrdinalIgnoreCase)) return ConnectionFailureCategory.Ssl;
             if (message.Contains("pool", StringComparison.OrdinalIgnoreCase)) return ConnectionFailureCategory.PoolExhausted;
             if (message.Contains("password", StringComparison.OrdinalIgnoreCase) || message.Contains("authentication", StringComparison.OrdinalIgnoreCase)) return ConnectionFailureCategory.Authentication;
@@ -274,6 +285,33 @@ public static class ConnectionFailureClassifier
         }
         if (exception is ObjectDisposedException) return ConnectionFailureCategory.Disposed;
         return ConnectionFailureCategory.Unknown;
+    }
+
+    private static ConnectionFailureCategory ClassifyPostgres(PostgresException postgres) =>
+        postgres.SqlState switch
+        {
+            "28P01" or "28000" => ConnectionFailureCategory.Authentication,
+            "42501" => ConnectionFailureCategory.Authorisation,
+            "3D000" => ConnectionFailureCategory.DatabaseUnavailable,
+            "53300" => ConnectionFailureCategory.PoolExhausted,
+            "57P01" or "57P02" or "57P03" => ConnectionFailureCategory.ServerUnavailable,
+            _ => ConnectionFailureCategory.Unknown,
+        };
+
+    private static IEnumerable<Exception> ExceptionChain(Exception exception)
+    {
+        var pending = new Queue<Exception>();
+        var seen = new HashSet<Exception>(ReferenceEqualityComparer.Instance);
+        pending.Enqueue(exception);
+        while (pending.Count > 0)
+        {
+            var current = pending.Dequeue();
+            if (!seen.Add(current)) continue;
+            yield return current;
+            if (current.InnerException is not null) pending.Enqueue(current.InnerException);
+            if (current is AggregateException aggregate)
+                foreach (var nested in aggregate.InnerExceptions) pending.Enqueue(nested);
+        }
     }
 
     public static string UserMessage(ConnectionFailureCategory category) => category switch

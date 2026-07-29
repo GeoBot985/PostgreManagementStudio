@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using PostgreManagementStudio.Core;
 
 namespace PostgreManagementStudio.Application;
@@ -23,8 +24,10 @@ public sealed class QueryDocument : IAsyncDisposable
     public event EventHandler? ExecutionStateChanged;
     public Guid TabId { get; } = Guid.NewGuid();
     public string Title { get; }
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     public string SqlText { get; set; } = "SELECT version();";
     public string ConnectionProfileId { get; set; } = "environment:PMS_CONNECTION_STRING";
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     public string ConnectionString { get; set; } = string.Empty;
     public string Database { get; set; } = "postgres";
     public Guid ConnectionGenerationId { get { lock (_gate) return _connectionGenerationId; } }

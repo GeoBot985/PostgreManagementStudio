@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace PostgreManagementStudio.Core;
 
 public enum QueryTransactionMode { Implicit, UserManaged }
@@ -42,9 +44,12 @@ public sealed record QueryRequest
         if (string.IsNullOrWhiteSpace(connectionString)) throw new ArgumentException("A connection string is required.", nameof(connectionString));
         Sql = sql; ConnectionString = connectionString; Options = options ?? new();
     }
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     public string Sql { get; }
+    [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     public string ConnectionString { get; }
     public QueryExecutionOptions Options { get; }
+    public override string ToString() => $"QueryRequest (transaction={Options.TransactionMode}, SQL and connection redacted)";
 }
 
 public interface IQueryExecutor

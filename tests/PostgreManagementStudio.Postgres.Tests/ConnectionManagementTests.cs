@@ -7,6 +7,29 @@ namespace PostgreManagementStudio.Postgres.Tests;
 public sealed class ConnectionManagementTests
 {
     [Fact]
+    public void ProductionProfile_AutomaticallyEnforcesServerSideReadOnlyMode()
+    {
+        var configuration = EffectiveConnectionConfigurationBuilder.Build(ValidProfile() with
+        {
+            Environment = EnvironmentClassification.Production,
+            IsReadOnly = false,
+        });
+        Assert.True(configuration.Profile.EffectiveReadOnly);
+        using var connection = NpgsqlConnectionFactory.Shared.Create(configuration);
+        Assert.Contains("default_transaction_read_only=on", connection.ConnectionString);
+    }
+
+    [Fact]
+    public void AdvancedOptions_CannotOverrideProtectedSessionOptions()
+    {
+        var validation = ConnectionProfileValidator.Validate(ValidProfile() with
+        {
+            AdvancedOptions = new Dictionary<string, string> { ["Options"] = "-c default_transaction_read_only=off" },
+        });
+        Assert.False(validation.IsValid);
+    }
+
+    [Fact]
     public void EffectiveConfigurationNormalisesDefaultsAndRejectsUnsafeProviderOptions()
     {
         var configuration = EffectiveConnectionConfigurationBuilder.FromConnectionString(
@@ -35,14 +58,14 @@ public sealed class ConnectionManagementTests
     [Fact]
     public void EffectiveConfigurationDeepCopiesAdvancedOptions()
     {
-        var options = new Dictionary<string, string> { ["Options"] = "-c statement_timeout=1000" };
+        var options = new Dictionary<string, string> { ["Cancellation Timeout"] = "1000" };
         var configuration = EffectiveConnectionConfigurationBuilder.Build(
             ValidProfile() with { AdvancedOptions = options });
-        options["Options"] = "-c statement_timeout=999999";
+        options["Cancellation Timeout"] = "999999";
 
-        Assert.Equal("-c statement_timeout=1000", configuration.Profile.AdvancedOptions["Options"]);
+        Assert.Equal("1000", configuration.Profile.AdvancedOptions["Cancellation Timeout"]);
         Assert.Throws<NotSupportedException>(() =>
-            ((IDictionary<string, string>)configuration.Profile.AdvancedOptions)["Options"] = "changed");
+            ((IDictionary<string, string>)configuration.Profile.AdvancedOptions)["Cancellation Timeout"] = "changed");
     }
 
     [Fact]

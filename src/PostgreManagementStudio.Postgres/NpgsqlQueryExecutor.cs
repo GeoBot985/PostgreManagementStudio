@@ -211,8 +211,11 @@ public sealed class NpgsqlQueryExecutor(INpgsqlConnectionFactory? connectionFact
             || exception.Message.Contains("timeout", StringComparison.OrdinalIgnoreCase)
             || exception.Message.Contains("timed out", StringComparison.OrdinalIgnoreCase);
 
-    private sealed record ScopedConnection(string ConnectionString, NpgsqlConnection Connection)
+    private sealed record ScopedConnection(
+        [property: System.Diagnostics.DebuggerBrowsable(System.Diagnostics.DebuggerBrowsableState.Never)] string ConnectionString,
+        NpgsqlConnection Connection)
     {
         public SemaphoreSlim Gate { get; } = new(1, 1);
+        public override string ToString() => $"ScopedConnection ({Connection.State}, connection string redacted)";
     }
 }

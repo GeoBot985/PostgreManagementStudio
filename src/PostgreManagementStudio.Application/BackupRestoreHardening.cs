@@ -354,15 +354,7 @@ public static class BackupRestoreErrorClassifier
 
 public static class BackupSecretRedactor
 {
-    public static string Redact(string? value)
-    {
-        if (string.IsNullOrEmpty(value)) return value ?? "";
-        var redacted = System.Text.RegularExpressions.Regex.Replace(value,
-            @"(?i)(password|pwd|passfile|pgpassword)\s*=\s*([^\s;]+)", "$1=[REDACTED]");
-        redacted = System.Text.RegularExpressions.Regex.Replace(redacted,
-            @"(?i)(postgres(?:ql)?://[^:\s/]+:)([^@\s]+)(@)", "$1[REDACTED]$3");
-        return redacted.Replace('\0', '\uFFFD');
-    }
+    public static string Redact(string? value) => PostgreManagementStudio.Core.SensitiveDataRedactor.Redact(value).Replace('\0', '\uFFFD');
 }
 
 public static class BackupAtomicOutput

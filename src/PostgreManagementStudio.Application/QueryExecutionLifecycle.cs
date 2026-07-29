@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Diagnostics;
 using PostgreManagementStudio.Core;
 
 namespace PostgreManagementStudio.Application;
@@ -24,8 +25,12 @@ public sealed record QueryExecutionContextSnapshot(
     string Username,
     string SslMode,
     QueryTransactionMode TransactionMode,
-    string Sql,
-    DateTimeOffset StartedAt);
+    [property: DebuggerBrowsable(DebuggerBrowsableState.Never)] string Sql,
+    DateTimeOffset StartedAt)
+{
+    public override string ToString() =>
+        $"Execution {ExecutionId} on {ServerIdentity}/{Database} as {Username} (SQL redacted)";
+}
 
 public sealed record QueryExecutionDiagnostic(
     Guid ExecutionId,
@@ -245,17 +250,5 @@ public static class QueryErrorPresentation
 
 public static class SecretRedactor
 {
-    private static readonly string[] Keys = ["Password", "Pwd", "Access Token", "Token", "Client Secret"];
-
-    public static string Redact(string? text)
-    {
-        if (string.IsNullOrEmpty(text)) return string.Empty;
-        var redacted = text;
-        foreach (var key in Keys)
-            redacted = System.Text.RegularExpressions.Regex.Replace(
-                redacted,
-                $@"(?i)({System.Text.RegularExpressions.Regex.Escape(key)}\s*=\s*)(?:""[^""]*""|'[^']*'|[^;\s]+)",
-                "$1<redacted>");
-        return redacted;
-    }
+    public static string Redact(string? text) => PostgreManagementStudio.Core.SensitiveDataRedactor.Redact(text);
 }

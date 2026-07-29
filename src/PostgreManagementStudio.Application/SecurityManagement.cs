@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 
 namespace PostgreManagementStudio.Application;
@@ -7,22 +8,38 @@ public sealed record RoleMembership(string Member, string GrantedRole, bool With
 public enum SecurityPrivilege { Connect, Create, Temporary, Usage, Select, Insert, Update, Delete, Truncate, References, Trigger, Execute, UsageSequence }
 public enum PrivilegeTargetKind { Database, Schema, Table, View, MaterializedView, Sequence, Function, Procedure }
 public sealed record PrivilegeTarget(PrivilegeTargetKind Kind, string Name, string? Schema = null, string? Signature = null);
-public sealed record RoleDefinition(string Name, bool Login = false, bool Superuser = false, bool CreateDatabase = false, bool CreateRole = false, bool Replication = false, bool BypassRls = false, bool Inherit = true, int ConnectionLimit = -1, string? Password = null, DateTimeOffset? PasswordExpiry = null, string? Comment = null);
+public sealed record RoleDefinition(string Name, bool Login = false, bool Superuser = false, bool CreateDatabase = false, bool CreateRole = false, bool Replication = false, bool BypassRls = false, bool Inherit = true, int ConnectionLimit = -1, [property: DebuggerBrowsable(DebuggerBrowsableState.Never)] string? Password = null, DateTimeOffset? PasswordExpiry = null, string? Comment = null)
+{
+    public override string ToString() => $"RoleDefinition ({Name}, password redacted)";
+}
 public sealed record SecuritySqlCommand(string Sql, IReadOnlyDictionary<string, object?> Parameters);
 
 public static class PostgreSqlIdentifierQuoter
 {
-    public static string Quote(string identifier) => '"' + (identifier ?? throw new ArgumentNullException(nameof(identifier))).Replace("\"", "\"\"") + '"';
+    public static string Quote(string identifier)
+    {
+        ArgumentNullException.ThrowIfNull(identifier);
+        if (identifier.IndexOf('\0') >= 0) throw new ArgumentException("PostgreSQL identifiers cannot contain null characters.", nameof(identifier));
+        return '"' + identifier.Replace("\"", "\"\"") + '"';
+    }
     public static string Qualified(string? schema, string name) => schema is null ? Quote(name) : Quote(schema) + "." + Quote(name);
+    public static string Qualified(params string[] components)
+    {
+        ArgumentNullException.ThrowIfNull(components);
+        if (components.Length == 0 || components.Any(string.IsNullOrEmpty)) throw new ArgumentException("At least one non-empty identifier component is required.", nameof(components));
+        return string.Join(".", components.Select(Quote));
+    }
 }
 public static class RoleSqlBuilder
 {
     public static SecuritySqlCommand Create(RoleDefinition role)
-    { Validate(role); var sql = new StringBuilder("CREATE ROLE ").Append(PostgreSqlIdentifierQuoter.Quote(role.Name)); AddAttributes(sql, role); if (role.Password is not null) sql.Append(" PASSWORD @password"); sql.Append(';'); return new(sql.ToString(), role.Password is null ? new Dictionary<string, object?>() : new Dictionary<string, object?> { ["password"] = role.Password }); }
+    { Validate(role); var parameters = Parameters(role); var sql = new StringBuilder("CREATE ROLE ").Append(PostgreSqlIdentifierQuoter.Quote(role.Name)); AddAttributes(sql, role); if (role.Password is not null) sql.Append(" PASSWORD @password"); sql.Append(';'); return new(sql.ToString(), parameters); }
     public static SecuritySqlCommand Alter(RoleDefinition role)
-    { Validate(role); var sql = new StringBuilder("ALTER ROLE ").Append(PostgreSqlIdentifierQuoter.Quote(role.Name)); AddAttributes(sql, role); if (role.Password is not null) sql.Append(" PASSWORD @password"); sql.Append(';'); return new(sql.ToString(), role.Password is null ? new Dictionary<string, object?>() : new Dictionary<string, object?> { ["password"] = role.Password }); }
+    { Validate(role); var parameters = Parameters(role); var sql = new StringBuilder("ALTER ROLE ").Append(PostgreSqlIdentifierQuoter.Quote(role.Name)); AddAttributes(sql, role); if (role.Password is not null) sql.Append(" PASSWORD @password"); sql.Append(';'); return new(sql.ToString(), parameters); }
     public static string Drop(string role, bool currentUser) => currentUser ? throw new InvalidOperationException("The active session role cannot be dropped.") : $"DROP ROLE {PostgreSqlIdentifierQuoter.Quote(role)};";
-    private static void AddAttributes(StringBuilder sql, RoleDefinition r) { sql.Append(r.Login ? " LOGIN" : " NOLOGIN").Append(r.Superuser ? " SUPERUSER" : " NOSUPERUSER").Append(r.CreateDatabase ? " CREATEDB" : " NOCREATEDB").Append(r.CreateRole ? " CREATEROLE" : " NOCREATEROLE").Append(r.Replication ? " REPLICATION" : " NOREPLICATION").Append(r.BypassRls ? " BYPASSRLS" : " NOBYPASSRLS").Append(r.Inherit ? " INHERIT" : " NOINHERIT").Append(" CONNECTION LIMIT ").Append(r.ConnectionLimit); if (r.PasswordExpiry is { } expiry) sql.Append(" VALID UNTIL '").Append(expiry.UtcDateTime.ToString("O")).Append("'"); }
+    private static void AddAttributes(StringBuilder sql, RoleDefinition r) { sql.Append(r.Login ? " LOGIN" : " NOLOGIN").Append(r.Superuser ? " SUPERUSER" : " NOSUPERUSER").Append(r.CreateDatabase ? " CREATEDB" : " NOCREATEDB").Append(r.CreateRole ? " CREATEROLE" : " NOCREATEROLE").Append(r.Replication ? " REPLICATION" : " NOREPLICATION").Append(r.BypassRls ? " BYPASSRLS" : " NOBYPASSRLS").Append(r.Inherit ? " INHERIT" : " NOINHERIT").Append(" CONNECTION LIMIT ").Append(r.ConnectionLimit); if (r.PasswordExpiry is not null) sql.Append(" VALID UNTIL @password_expiry"); }
+    private static IReadOnlyDictionary<string, object?> Parameters(RoleDefinition role)
+    { var values = new Dictionary<string, object?>(); if (role.Password is not null) values["password"] = role.Password; if (role.PasswordExpiry is { } expiry) values["password_expiry"] = expiry.UtcDateTime; return values; }
     private static void Validate(RoleDefinition r) { if (string.IsNullOrWhiteSpace(r.Name)) throw new ArgumentException("Role name is required."); if (r.ConnectionLimit < -1) throw new ArgumentOutOfRangeException(nameof(r.ConnectionLimit)); }
 }
 public static class PrivilegeSqlBuilder
@@ -30,7 +47,16 @@ public static class PrivilegeSqlBuilder
     public static string Grant(string grantee, PrivilegeTarget target, IEnumerable<SecurityPrivilege> privileges, bool grantOption = false) => Build("GRANT", grantee, target, privileges, grantOption);
     public static string Revoke(string grantee, PrivilegeTarget target, IEnumerable<SecurityPrivilege> privileges, bool grantOption = false) => Build(grantOption ? "REVOKE GRANT OPTION FOR" : "REVOKE", grantee, target, privileges, false);
     public static string Membership(string member, string grantedRole, bool grant, bool adminOption = false) => grant ? $"GRANT {PostgreSqlIdentifierQuoter.Quote(grantedRole)} TO {PostgreSqlIdentifierQuoter.Quote(member)}" + (adminOption ? " WITH ADMIN OPTION;" : ";") : $"REVOKE {PostgreSqlIdentifierQuoter.Quote(grantedRole)} FROM {PostgreSqlIdentifierQuoter.Quote(member)};";
-    private static string Build(string action, string grantee, PrivilegeTarget target, IEnumerable<SecurityPrivilege> privileges, bool grantOption) { var names = privileges.Select(x => x switch { SecurityPrivilege.UsageSequence => "USAGE", _ => x.ToString().ToUpperInvariant() }); var targetName = target.Kind == PrivilegeTargetKind.Database ? "DATABASE " + PostgreSqlIdentifierQuoter.Quote(target.Name) : target.Kind == PrivilegeTargetKind.Schema ? "SCHEMA " + PostgreSqlIdentifierQuoter.Quote(target.Name) : target.Kind switch { PrivilegeTargetKind.Function => "FUNCTION " + PostgreSqlIdentifierQuoter.Qualified(target.Schema, target.Name) + "(" + (target.Signature ?? "") + ")", PrivilegeTargetKind.Procedure => "PROCEDURE " + PostgreSqlIdentifierQuoter.Qualified(target.Schema, target.Name) + "(" + (target.Signature ?? "") + ")", _ => "TABLE " + PostgreSqlIdentifierQuoter.Qualified(target.Schema, target.Name) }; return $"{action} {string.Join(", ", names)} ON {targetName} TO {PostgreSqlIdentifierQuoter.Quote(grantee)}" + (grantOption ? " WITH GRANT OPTION" : "") + ";"; }
+    private static string Build(string action, string grantee, PrivilegeTarget target, IEnumerable<SecurityPrivilege> privileges, bool grantOption) { var names = privileges.Select(x => x switch { SecurityPrivilege.UsageSequence => "USAGE", _ => x.ToString().ToUpperInvariant() }); var targetName = target.Kind == PrivilegeTargetKind.Database ? "DATABASE " + PostgreSqlIdentifierQuoter.Quote(target.Name) : target.Kind == PrivilegeTargetKind.Schema ? "SCHEMA " + PostgreSqlIdentifierQuoter.Quote(target.Name) : target.Kind switch { PrivilegeTargetKind.Function => "FUNCTION " + PostgreSqlIdentifierQuoter.Qualified(target.Schema, target.Name) + "(" + SafeRoutineSignature(target.Signature) + ")", PrivilegeTargetKind.Procedure => "PROCEDURE " + PostgreSqlIdentifierQuoter.Qualified(target.Schema, target.Name) + "(" + SafeRoutineSignature(target.Signature) + ")", _ => "TABLE " + PostgreSqlIdentifierQuoter.Qualified(target.Schema, target.Name) }; return $"{action} {string.Join(", ", names)} ON {targetName} TO {PostgreSqlIdentifierQuoter.Quote(grantee)}" + (grantOption ? " WITH GRANT OPTION" : "") + ";"; }
+    private static string SafeRoutineSignature(string? signature)
+    {
+        if (string.IsNullOrWhiteSpace(signature)) return "";
+        if (signature.Length > 2048 || signature.Any(char.IsControl)
+            || signature.Contains(';') || signature.Contains("--", StringComparison.Ordinal)
+            || signature.Contains("/*", StringComparison.Ordinal) || signature.Contains('\''))
+            throw new ArgumentException("Routine signature contains unsafe SQL syntax.", nameof(signature));
+        return signature;
+    }
 }
 public static class DefaultPrivilegeSqlBuilder
 {

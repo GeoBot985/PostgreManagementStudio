@@ -23,6 +23,8 @@ public partial class MainWindow : Window
     private readonly IConnectionProbe _connectionProbe;
     private readonly IConnectionRecoveryDiagnostics _connectionDiagnostics;
     private readonly IPerformanceDiagnostics _performanceDiagnostics;
+    private readonly IConnectionProfileStore _connectionProfiles;
+    private readonly CredentialLifecycleService _credentials;
     private readonly HashSet<ConnectionRecoverySession> _recoverySessions = [];
     private readonly DispatcherTimer _statusTimer;
     private CancellationTokenSource? _metadataCancellation;
@@ -42,7 +44,9 @@ public partial class MainWindow : Window
         BackupInspectionService backupInspection,
         IConnectionProbe connectionProbe,
         IConnectionRecoveryDiagnostics connectionDiagnostics,
-        IPerformanceDiagnostics performanceDiagnostics)
+        IPerformanceDiagnostics performanceDiagnostics,
+        IConnectionProfileStore connectionProfiles,
+        CredentialLifecycleService credentials)
     {
         using var performance = new PerformanceOperation(
             "MainWindowConstruction",
@@ -58,6 +62,8 @@ public partial class MainWindow : Window
         _connectionProbe = connectionProbe;
         _connectionDiagnostics = connectionDiagnostics;
         _performanceDiagnostics = performanceDiagnostics;
+        _connectionProfiles = connectionProfiles;
+        _credentials = credentials;
         _defaultConnection = ReadDevelopmentFallback();
         RegisterCommands();
         AddTab();
@@ -269,7 +275,7 @@ public partial class MainWindow : Window
     private async Task ConnectAsync()
     {
         var current = ActiveView?.Connection ?? _defaultConnection;
-        var dialog = new ConnectionDialog(_connectionProbe, _connectionDiagnostics, current) { Owner = this };
+        var dialog = new ConnectionDialog(_connectionProbe, _connectionDiagnostics, _connectionProfiles, _credentials, current) { Owner = this };
         if (dialog.ShowDialog() != true || dialog.Connection is null) return;
         _defaultConnection = dialog.Connection;
         TrackConnection(dialog.Connection);
@@ -443,7 +449,7 @@ public partial class MainWindow : Window
         var connection = view.Connection;
         ConnectionToolbarText.Text = connection is null
             ? "Connect…"
-            : $"{connection.Username}@{connection.Host}:{connection.Port} ({snapshot!.State})";
+            : $"{connection.Configuration.Profile.Name} · {connection.Username}@{connection.Host}:{connection.Port} ({snapshot!.State})";
         var elapsed = view!.ExecutionElapsed;
         var query = view.IsExecuting
             ? $"{doc.State} · {elapsed?.ToString(@"hh\:mm\:ss") ?? "00:00:00"}"
@@ -451,8 +457,13 @@ public partial class MainWindow : Window
         var rows = view.HasResults ? $"{view.RowsReceived:N0} returned; {view.RowsAffected:N0} affected" : "—";
         var stateText = snapshot is null ? "Disconnected" : snapshot.State.ToString();
         if (connected && connection!.IsDevelopmentFallback) stateText += " (environment fallback)";
+        if (connected)
+        {
+            stateText += $" · {connection!.Configuration.Profile.EnvironmentDisplayName}";
+            if (connection.Configuration.Profile.EffectiveReadOnly) stateText += " · READ ONLY";
+        }
         if (snapshot?.BackendProcessId is { } pid) stateText += $" · PID {pid}";
-        SetStatus(stateText, connection?.Host ?? "—", doc.Database, connection?.Username ?? "—", query, rows, view.CaretPosition);
+        SetStatus(stateText, connection is null ? "—" : $"{connection.Host}:{connection.Port}", doc.Database, connection?.Username ?? "—", query, rows, view.CaretPosition);
     }
 
     private async Task CheckActiveConnectionHealthAsync()
@@ -608,7 +619,12 @@ public partial class MainWindow : Window
 
     private TreeViewItem ToTreeItem(ObjectExplorerNode node, IReadOnlySet<PostgresObjectIdentity>? expanded = null)
     {
-        var item = new TreeViewItem { Header = node.Name, Tag = node };
+        var item = new TreeViewItem
+        {
+            Header = UntrustedText.ForDisplay(node.Name),
+            ToolTip = UntrustedText.ForDisplay(node.Name, 4_096),
+            Tag = node,
+        };
         if (node.HasChildren)
             item.Items.Add(new TreeViewItem { Header = "Expand to load…", IsEnabled = false });
         item.Expanded += TreeItem_Expanded;

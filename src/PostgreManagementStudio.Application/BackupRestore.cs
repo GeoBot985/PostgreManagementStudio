@@ -11,7 +11,7 @@ public sealed record DatabaseConnection(
     int Port,
     string Database,
     string Username,
-    [property: JsonIgnore] string? Password = null)
+    [property: JsonIgnore, DebuggerBrowsable(DebuggerBrowsableState.Never)] string? Password = null)
 {
     public static DatabaseConnection FromConnectionString(string value)
     {

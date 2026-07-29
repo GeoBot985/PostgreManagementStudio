@@ -20,6 +20,11 @@ public static class ProductionServices
         services.AddSingleton<IConnectionProbe, NpgsqlConnectionProbe>();
         services.AddSingleton<IConnectionPoolInvalidator, NpgsqlConnectionPoolInvalidator>();
         services.AddSingleton<ConnectionProfileRegistry>();
+        services.AddSingleton<IProtectedCredentialStore, WindowsCredentialStore>();
+        services.AddSingleton<CredentialLifecycleService>();
+        services.AddSingleton<IConnectionProfileStore>(sp => new JsonConnectionProfileStore(
+            DefaultConnectionProfilesPath,
+            sp.GetRequiredService<CredentialLifecycleService>()));
         services.AddSingleton<IQueryExecutor>(sp => new NpgsqlQueryExecutor(sp.GetRequiredService<INpgsqlConnectionFactory>()));
         services.AddSingleton<IPostgresVersionQuery>(sp => new NpgsqlPostgresVersionQuery(sp.GetRequiredService<INpgsqlConnectionFactory>()));
         services.AddSingleton<NpgsqlMetadataProvider>(sp => new(sp.GetRequiredService<INpgsqlConnectionFactory>()));
@@ -71,4 +76,9 @@ public static class ProductionServices
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "PostgreManagementStudio",
         "settings.json");
+
+    public static string DefaultConnectionProfilesPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "PostgreManagementStudio",
+        "connections.json");
 }
