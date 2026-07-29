@@ -8,6 +8,7 @@ using System.Windows.Threading;
 using PostgreManagementStudio.Application;
 using PostgreManagementStudio.Core;
 using PostgreManagementStudio.Postgres;
+using PostgreManagementStudio.Results;
 
 namespace PostgreManagementStudio.Desktop;
 
@@ -24,6 +25,9 @@ public partial class MainWindow : Window
     private readonly PostgresVersionService _postgresVersion;
     private readonly NpgsqlIndexAnalysisService _indexAnalysis;
     private readonly NpgsqlSchemaModelExtractor _schemaExtractor;
+    private readonly NpgsqlDataTransferService _dataTransfer;
+    private readonly IResultExportService _resultExport;
+    private readonly TransferHistoryService _transferHistory;
     private readonly IConnectionProbe _connectionProbe;
     private readonly IConnectionRecoveryDiagnostics _connectionDiagnostics;
     private readonly IPerformanceDiagnostics _performanceDiagnostics;
@@ -54,6 +58,9 @@ public partial class MainWindow : Window
         PostgresVersionService postgresVersion,
         NpgsqlIndexAnalysisService indexAnalysis,
         NpgsqlSchemaModelExtractor schemaExtractor,
+        NpgsqlDataTransferService dataTransfer,
+        IResultExportService resultExport,
+        TransferHistoryService transferHistory,
         IConnectionProbe connectionProbe,
         IConnectionRecoveryDiagnostics connectionDiagnostics,
         IPerformanceDiagnostics performanceDiagnostics,
@@ -76,6 +83,9 @@ public partial class MainWindow : Window
         _postgresVersion = postgresVersion;
         _indexAnalysis = indexAnalysis;
         _schemaExtractor = schemaExtractor;
+        _dataTransfer = dataTransfer;
+        _resultExport = resultExport;
+        _transferHistory = transferHistory;
         _connectionProbe = connectionProbe;
         _connectionDiagnostics = connectionDiagnostics;
         _performanceDiagnostics = performanceDiagnostics;
@@ -135,13 +145,13 @@ public partial class MainWindow : Window
         Bind(ShellCommands.GoToLine, _ => ActiveView!.GoToLine(), _ => ActiveView is not null);
         Bind(ShellCommands.CopyResults, _ => ActiveView!.CopyResults(false), _ => State.CanExecute(ShellCommandId.ResultAction));
         Bind(ShellCommands.CopyResultsWithHeaders, _ => ActiveView!.CopyResults(true), _ => State.CanExecute(ShellCommandId.ResultAction));
-        BindAsync(ShellCommands.ExportResults, () => ActiveView!.ExportResultsAsync(), _ => State.CanExecute(ShellCommandId.ResultAction));
+        BindAsync(ShellCommands.ExportResults, () => ActiveView!.OpenExportWorkspaceAsync(), _ => State.CanExecute(ShellCommandId.ResultAction));
         Bind(ShellCommands.FindInResults, _ => ActiveView!.ShowResultSearch(), _ => State.CanExecute(ShellCommandId.ResultAction));
         Bind(ShellCommands.ClearResults, _ => ActiveView!.ClearResultView(), _ => State.CanExecute(ShellCommandId.ResultAction));
         BindAsync(ShellCommands.SearchObjects, () => ActiveView!.OpenSearchWorkspaceAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
         BindAsync(ShellCommands.IndexManagement, () => ActiveView!.OpenIndexWorkspaceAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
         BindAsync(ShellCommands.SchemaCompare, () => ActiveView!.OpenSchemaComparisonWorkspaceAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
-        BindAsync(ShellCommands.ImportData, () => ActiveView!.ImportDataAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
+        BindAsync(ShellCommands.ImportData, () => ActiveView!.OpenImportWorkspaceAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
         BindAsync(ShellCommands.Backup, () => ActiveView!.BackupDatabaseAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
         BindAsync(ShellCommands.Restore, () => ActiveView!.OpenRestoreWorkspaceAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
         BindAsync(ShellCommands.Maintenance, () => ActiveView!.OpenMaintenanceWorkspaceAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
@@ -200,7 +210,8 @@ public partial class MainWindow : Window
         doc.CommandTimeout = TimeSpan.FromSeconds(_settings.CommandTimeoutSeconds);
         doc.CancellationTimeout = TimeSpan.FromSeconds(_settings.CancellationTimeoutSeconds);
         var view = new QueryTabView(doc, _destructiveOperations, _settings, _backupRestore,
-            _backupTools, _backupInspection, _objectSearch, _postgresVersion, _indexAnalysis, _schemaExtractor, _performanceDiagnostics);
+            _backupTools, _backupInspection, _objectSearch, _postgresVersion, _indexAnalysis, _schemaExtractor,
+            _dataTransfer, _resultExport, _transferHistory, _performanceDiagnostics);
         if (recoverySnapshot is not null)
             view.RestoreRecoverySnapshot(recoverySnapshot);
         var tab = new TabItem { Content = view, Tag = doc };

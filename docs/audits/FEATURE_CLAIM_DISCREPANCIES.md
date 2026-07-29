@@ -26,6 +26,15 @@ synchronisation execution, and full snapshot/object coverage remain deferred.
 
 ## Corrective rule
 
+Sprint 53 composes the file-to-PostgreSQL import and retained-result-to-file
+export workflows into reusable WPF workspaces. The import surface supports
+delimited files, bounded preview, editable mappings, validation, cancellation,
+progress, rejected-row reporting and transfer history. The export surface
+supports CSV, TSV, JSON and SQL-insert output with explicit destination,
+validation, cancellation and history. PostgreSQL-to-PostgreSQL transfer,
+database/object export, and JSON import in the current preview surface remain
+deferred and are not claimed as complete.
+
 The current source-of-truth description is the reachability matrix plus the
 release-scope reset. Future sprint reports may retain historical status, but
 must use “service-only”, “temporary UI”, “partial”, “end-to-end reachable”, or

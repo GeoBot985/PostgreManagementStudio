@@ -9,6 +9,7 @@ using System.Windows.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using PostgreManagementStudio.Application;
 using PostgreManagementStudio.Postgres;
+using PostgreManagementStudio.Results;
 
 namespace PostgreManagementStudio.Desktop.Tests;
 
@@ -299,6 +300,33 @@ public sealed class ShellWorkflowTests
             Assert.Contains(LogicalDescendants(explorer).OfType<TabControl>(), _ => true);
             maintenance.Close();
             explorer.Close();
+        });
+    }
+
+    [Fact]
+    [Trait("Category", "UiIntegration")]
+    public void Sprint53_TransferWorkspacesExposeImportMappingAndExportReviewSurfaces()
+    {
+        RunSta((window, provider) =>
+        {
+            var history = provider.GetRequiredService<TransferHistoryService>();
+            var import = new DataTransferWorkspaceWindow(DataTransferWorkspaceMode.Import, history,
+                "Host=localhost;Database=postgres;Username=postgres",
+                provider.GetRequiredService<NpgsqlDataTransferService>());
+            var export = new DataTransferWorkspaceWindow(DataTransferWorkspaceMode.Export, history,
+                "Host=localhost;Database=postgres;Username=postgres",
+                exportService: provider.GetRequiredService<IResultExportService>());
+
+            Assert.Equal("Import data into PostgreSQL", import.Title);
+            Assert.Contains(LogicalDescendants(import).OfType<DataGrid>(), grid => grid.Columns.Count >= 4);
+            Assert.Contains(LogicalDescendants(import).OfType<Button>(), button => button.Content?.ToString() == "Validate plan");
+            Assert.Contains(LogicalDescendants(import).OfType<Button>(), button => button.Content?.ToString() == "Cancel");
+            Assert.Equal("Export query result", export.Title);
+            Assert.Contains(LogicalDescendants(export).OfType<ComboBox>(), combo => combo.Items.Count >= 4);
+            Assert.Contains(LogicalDescendants(export).OfType<CheckBox>(), check => check.Content?.ToString() == "Include headers");
+            Assert.Contains(LogicalDescendants(export).OfType<DataGrid>(), grid => grid.Columns.Count >= 5);
+            import.Close();
+            export.Close();
         });
     }
 

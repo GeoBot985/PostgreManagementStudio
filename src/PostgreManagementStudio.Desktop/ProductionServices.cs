@@ -59,6 +59,7 @@ public static class ProductionServices
         services.AddSingleton<IBackupRestoreConnectionValidator, NpgsqlBackupRestoreConnectionValidator>();
         services.AddSingleton<IBackupRestoreDiagnostics, DiagnosticBackupRestoreDiagnostics>();
         services.AddSingleton<BackupRestoreOperationService>();
+        services.AddSingleton<TransferHistoryService>();
         services.AddSingleton(sp => new ResultExecutionService(
             sp.GetRequiredService<IQueryExecutor>(),
             new ResultStorageOptions(
@@ -72,6 +73,7 @@ public static class ProductionServices
         services.AddTransient<DocumentFileService>();
         services.AddTransient<FindReplaceService>();
         services.AddTransient<ResultExportService>();
+        services.AddTransient<IResultExportService, ResultExportService>();
         services.AddTransient<ResultViewTransformationService>();
         services.AddTransient<NpgsqlActivityService>();
         services.AddTransient<NpgsqlDataTransferService>();

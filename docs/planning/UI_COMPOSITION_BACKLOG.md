@@ -62,9 +62,10 @@ finish one usable surface rather than expose another collection of buttons.
   choice, progress, rejected-row report, commit/rollback state presentation.
 - Unknowns: supported export destinations and editable-grid boundary.
 - Dependencies: result presentation and connection-state model.
-- Acceptance: preview is required before write; cancellation and rollback have
-  truthful outcomes; no partial result is labelled complete.
-- Risk: large.
+- Acceptance: met for the delivered delimited-file import and retained-result
+  export workflows; PostgreSQL-to-PostgreSQL transfer remains deferred.
+- Risk: medium; destination metadata is currently supplied by the existing
+  import adapter and database/object export is not composed.
 
 ## Sprint 54 — Performance history and query workspace
 
