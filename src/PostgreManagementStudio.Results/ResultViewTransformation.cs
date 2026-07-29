@@ -24,6 +24,9 @@ public sealed record ResultViewResult(IReadOnlyList<int> VisibleRowIndexes, IRea
 public sealed class ResultViewTransformationService
 {
     private static readonly ConcurrentDictionary<string, Regex> RegexCache = new();
+    private static readonly ConcurrentQueue<string> RegexInsertionOrder = new();
+    internal const int MaximumRegexCacheEntries = 64;
+    internal static int CachedRegexCount => RegexCache.Count;
     public Task<ResultViewResult> TransformAsync(ResultSetSchema schema, IReadOnlyList<ResultRow> rows, ResultViewState state, CancellationToken cancellationToken = default)
         => Task.Run(() => Transform(schema, rows, state, cancellationToken), cancellationToken);
 
@@ -59,7 +62,9 @@ public sealed class ResultViewTransformationService
             FilterOperator.NotContains => !text.Contains(Convert.ToString(f.FirstValue, CultureInfo.InvariantCulture) ?? "", comparison),
             FilterOperator.StartsWith => text.StartsWith(Convert.ToString(f.FirstValue, CultureInfo.InvariantCulture) ?? "", comparison),
             FilterOperator.EndsWith => text.EndsWith(Convert.ToString(f.FirstValue, CultureInfo.InvariantCulture) ?? "", comparison),
-            FilterOperator.Regex => RegexCache.GetOrAdd($"{f.CaseSensitive}:{f.FirstValue}", _ => new Regex(Convert.ToString(f.FirstValue)!, f.CaseSensitive ? RegexOptions.None : RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(250))).IsMatch(text),
+            FilterOperator.Regex => GetRegex(
+                Convert.ToString(f.FirstValue) ?? string.Empty,
+                f.CaseSensitive).IsMatch(text),
             FilterOperator.Equals or FilterOperator.NotEquals or FilterOperator.GreaterThan or FilterOperator.GreaterThanOrEqual or FilterOperator.LessThan or FilterOperator.LessThanOrEqual or FilterOperator.Between => CompareFilter(value, f),
             _ => false
         };
@@ -69,7 +74,22 @@ public sealed class ResultViewTransformationService
     { if (value is null) return false; var c = CompareValues(value, f.FirstValue); return f.Operator switch { FilterOperator.Equals => c == 0, FilterOperator.NotEquals => c != 0, FilterOperator.GreaterThan => c > 0, FilterOperator.GreaterThanOrEqual => c >= 0, FilterOperator.LessThan => c < 0, FilterOperator.LessThanOrEqual => c <= 0, FilterOperator.Between => c >= 0 && CompareValues(value, f.SecondValue) <= 0, _ => false }; }
     internal static int CompareValues(object? a, object? b)
     { if (a is null && b is null) return 0; if (a is null) return -1; if (b is null) return 1; if (a is IConvertible && b is IConvertible && decimal.TryParse(Convert.ToString(a, CultureInfo.InvariantCulture), NumberStyles.Any, CultureInfo.InvariantCulture, out var da) && decimal.TryParse(Convert.ToString(b, CultureInfo.InvariantCulture), NumberStyles.Any, CultureInfo.InvariantCulture, out var db)) return da.CompareTo(db); if (a is IComparable ca) try { return ca.CompareTo(b); } catch { } return string.Compare(a.ToString(), b.ToString(), StringComparison.OrdinalIgnoreCase); }
-    private static bool MatchesSearch(ResultRow row, ResultSetSchema schema, SearchState search, CancellationToken token) { if (!search.Active) return true; var options = search.Regex ? RegexOptions.IgnoreCase : RegexOptions.None; Regex? regex = search.Regex ? new Regex(search.Text, options, TimeSpan.FromMilliseconds(250)) : null; foreach (var cell in row.Cells) { token.ThrowIfCancellationRequested(); var text = cell.IsNull ? "NULL" : cell.Value?.ToString() ?? ""; if (regex?.IsMatch(text) == true || (!search.Regex && text.Contains(search.Text, StringComparisonFrom(search.CaseSensitive)))) return true; } return false; }
+    private static bool MatchesSearch(ResultRow row, ResultSetSchema schema, SearchState search, CancellationToken token) { if (!search.Active) return true; Regex? regex = search.Regex ? GetRegex(search.Text, search.CaseSensitive) : null; foreach (var cell in row.Cells) { token.ThrowIfCancellationRequested(); var text = cell.IsNull ? "NULL" : cell.Value?.ToString() ?? ""; if (regex?.IsMatch(text) == true || (!search.Regex && text.Contains(search.Text, StringComparisonFrom(search.CaseSensitive)))) return true; } return false; }
+    private static Regex GetRegex(string pattern, bool caseSensitive)
+    {
+        var key = $"{caseSensitive}:{pattern}";
+        if (RegexCache.TryGetValue(key, out var cached)) return cached;
+        var options = caseSensitive ? RegexOptions.CultureInvariant : RegexOptions.IgnoreCase | RegexOptions.CultureInvariant;
+        var created = new Regex(pattern, options, TimeSpan.FromMilliseconds(250));
+        var stored = RegexCache.GetOrAdd(key, created);
+        if (ReferenceEquals(stored, created))
+        {
+            RegexInsertionOrder.Enqueue(key);
+            while (RegexCache.Count > MaximumRegexCacheEntries && RegexInsertionOrder.TryDequeue(out var oldest))
+                RegexCache.TryRemove(oldest, out _);
+        }
+        return stored;
+    }
     private sealed class CellComparer(SortDescriptor sort) : IComparer<ResultCell?>
     { public int Compare(ResultCell? x, ResultCell? y) { var xn = x is null || x.IsNull || x.Value is null; var yn = y is null || y.IsNull || y.Value is null; if (xn || yn) { if (xn && yn) return 0; return xn == (sort.NullPlacement == NullPlacement.First) ? -1 : 1; } var c = CompareValues(x!.Value, y!.Value); return sort.Direction == SortDirection.Descending ? -c : c; } }
 }

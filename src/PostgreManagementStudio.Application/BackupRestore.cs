@@ -94,7 +94,13 @@ public sealed class ExternalProcessRunner(
             throw new ArgumentOutOfRangeException(nameof(maximumCapturedLines));
         ValidateExecutable(request.FileName);
         var startedAt = DateTimeOffset.UtcNow;
-        var output = new Queue<ProcessOutputEntry>(Math.Min(maximumCapturedLines, 256));
+        // Keep a small header as well as the newest diagnostics. PostgreSQL tools place
+        // archive identity/version metadata at the start of output, while failures and
+        // summaries are normally at the end.
+        var headerCapacity = Math.Max(1, Math.Min(64, maximumCapturedLines / 4));
+        var tailCapacity = maximumCapturedLines - headerCapacity;
+        var outputHeader = new List<ProcessOutputEntry>(headerCapacity);
+        var outputTail = new Queue<ProcessOutputEntry>(Math.Min(tailCapacity, 256));
         var outputGate = new object();
         var truncated = false;
         using var process = new Process
@@ -166,12 +172,19 @@ public sealed class ExternalProcessRunner(
                 var entry = new ProcessOutputEntry(error, BackupSecretRedactor.Redact(line), DateTimeOffset.UtcNow);
                 lock (outputGate)
                 {
-                    if (output.Count == maximumCapturedLines)
+                    if (outputHeader.Count < headerCapacity)
                     {
-                        output.Dequeue();
-                        truncated = true;
+                        outputHeader.Add(entry);
                     }
-                    output.Enqueue(entry);
+                    else
+                    {
+                        if (outputTail.Count == tailCapacity)
+                        {
+                            outputTail.Dequeue();
+                            truncated = true;
+                        }
+                        outputTail.Enqueue(entry);
+                    }
                 }
                 progress?.Report(entry);
             }
@@ -179,7 +192,7 @@ public sealed class ExternalProcessRunner(
 
         IReadOnlyList<ProcessOutputEntry> Snapshot()
         {
-            lock (outputGate) return output.ToArray();
+            lock (outputGate) return [.. outputHeader, .. outputTail];
         }
     }
 

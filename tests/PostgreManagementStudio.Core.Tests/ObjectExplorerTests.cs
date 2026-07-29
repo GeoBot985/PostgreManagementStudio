@@ -26,6 +26,7 @@ public sealed class ObjectExplorerTests
         await Task.WhenAll(first, second);
 
         Assert.Equal(1, provider.ChildLoads);
+        Assert.Equal(2, service.DatabaseRoundTrips);
         Assert.True(schema.IsLoaded);
         var tables = schema.Children.Single(x => x.Kind == ObjectExplorerNodeKind.Tables);
         Assert.Single(tables.Children);

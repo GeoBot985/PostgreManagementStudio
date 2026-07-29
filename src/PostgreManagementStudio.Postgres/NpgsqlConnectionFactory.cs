@@ -1,4 +1,5 @@
 using Npgsql;
+using System.Diagnostics.Metrics;
 
 namespace PostgreManagementStudio.Postgres;
 
@@ -15,6 +16,14 @@ public interface INpgsqlConnectionFactory
 
 public sealed class NpgsqlConnectionFactory : INpgsqlConnectionFactory
 {
+    private static readonly Meter ResourceMeter = new(
+        "PostgreManagementStudio.Postgres.Resources",
+        typeof(NpgsqlConnectionFactory).Assembly.GetName().Version?.ToString());
+    private static readonly Counter<long> ConnectionsCreated =
+        ResourceMeter.CreateCounter<long>("pms.postgresql.connections.created");
+    private static readonly Counter<long> PoolsCleared =
+        ResourceMeter.CreateCounter<long>("pms.postgresql.pools.cleared");
+
     public static NpgsqlConnectionFactory Shared { get; } = new();
 
     public NpgsqlConnection Create(string connectionString, string applicationName)
@@ -31,6 +40,7 @@ public sealed class NpgsqlConnectionFactory : INpgsqlConnectionFactory
     public NpgsqlConnection Create(EffectiveConnectionConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(configuration);
+        ConnectionsCreated.Add(1);
         return new NpgsqlConnection(configuration.ProviderConnectionString);
     }
 
@@ -38,5 +48,6 @@ public sealed class NpgsqlConnectionFactory : INpgsqlConnectionFactory
     {
         using var connection = Create(configuration);
         NpgsqlConnection.ClearPool(connection);
+        PoolsCleared.Add(1);
     }
 }

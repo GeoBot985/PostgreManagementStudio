@@ -16,6 +16,7 @@ public static class ProductionServices
         services.AddSingleton<INpgsqlConnectionFactory>(NpgsqlConnectionFactory.Shared);
         services.AddSingleton<IConnectionDiagnostics, DiagnosticConnectionDiagnostics>();
         services.AddSingleton<IConnectionRecoveryDiagnostics, DiagnosticConnectionRecoveryDiagnostics>();
+        services.AddSingleton<IPerformanceDiagnostics, TracePerformanceDiagnostics>();
         services.AddSingleton<IConnectionProbe, NpgsqlConnectionProbe>();
         services.AddSingleton<IConnectionPoolInvalidator, NpgsqlConnectionPoolInvalidator>();
         services.AddSingleton<ConnectionProfileRegistry>();

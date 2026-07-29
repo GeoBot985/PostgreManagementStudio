@@ -4,7 +4,8 @@ param(
     [string]$PostgreSqlBin,
     [int]$Repeat = 1,
     [switch]$KeepDatabase,
-    [switch]$SkipCoverage
+    [switch]$SkipCoverage,
+    [switch]$IncludeLargeDataset
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,6 +30,7 @@ $managedEnvironmentNames = @(
     'PMS_TEST_RESTRICTED_CONNECTION_STRING',
     'PMS_TEST_DATABASE',
     'PMS_TEST_PG_BIN',
+    'PMS_PERF_DATASET',
     'PMS_RUN_PERF'
 )
 $originalEnvironment = @{}
@@ -99,6 +101,12 @@ try {
         '--set', "restricted_role=$restrictedRole",
         '--file', (Join-Path $repositoryRoot 'scripts\testing\seed.sql')
     )
+    if ($IncludeLargeDataset) {
+        Invoke-Psql $testDatabase @(
+            '--set', "app_role=$appRole",
+            '--file', (Join-Path $repositoryRoot 'scripts\testing\seed-performance.sql')
+        )
+    }
 
     $env:PMS_ADMIN_CONNECTION_STRING = "Host=$hostName;Port=$port;Database=$testDatabase;Username=$adminUser;Password=$adminPassword;Application Name=PostgreManagementStudio Regression Admin"
     $env:PMS_CONNECTION_STRING = "Host=$hostName;Port=$port;Database=$testDatabase;Username=$appRole;Password=$appPassword;Application Name=PostgreManagementStudio Regression"
@@ -106,6 +114,7 @@ try {
     $env:PMS_TEST_RESTRICTED_CONNECTION_STRING = "Host=$hostName;Port=$port;Database=$testDatabase;Username=$restrictedRole;Password=$restrictedPassword"
     $env:PMS_TEST_DATABASE = $testDatabase
     $env:PMS_TEST_PG_BIN = $PostgreSqlBin
+    $env:PMS_PERF_DATASET = if ($IncludeLargeDataset) { '1' } else { '0' }
     $env:PMS_RUN_PERF = '1'
 
     Push-Location $repositoryRoot

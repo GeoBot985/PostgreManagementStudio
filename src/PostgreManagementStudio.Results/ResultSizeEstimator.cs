@@ -1,4 +1,5 @@
 using PostgreManagementStudio.Core;
+using System.Text.Json;
 
 namespace PostgreManagementStudio.Results;
 
@@ -56,7 +57,9 @@ internal static class ResultSizeEstimator
             DateTimeOffset => BoxedDateTimeBytes,
             TimeSpan => BoxedTimeSpanBytes,
             Guid => BoxedGuidBytes,
-            _ when v.GetType().IsArray => EstimateArrayBytes((Array)v),
+            JsonDocument json => StringHeaderBytes + json.RootElement.GetRawText().Length * CharSizeBytes,
+            JsonElement json => StringHeaderBytes + json.GetRawText().Length * CharSizeBytes,
+            _ when v.GetType().IsArray => EstimateArrayBytes((Array)v, 0),
             _ => ObjectHeaderBytes + PaddingBytes // unknown object; fall back to header + alignment pad
         };
     }
@@ -88,12 +91,27 @@ internal static class ResultSizeEstimator
         return total;
     }
 
-    private static int EstimateArrayBytes(Array array)
+    private static int EstimateArrayBytes(Array array, int depth)
     {
-        // Conservative: header + per-element reference (length × 8). Nested arrays are
-        // bounded by ResultSetSchema column count and a single nesting level is sufficient
-        // for in-memory accounting.
-        return ArrayHeaderBytes + array.Length * ObjectReferenceBytes;
+        // Include nested retained values so large PostgreSQL arrays cannot bypass
+        // the configured result-memory budget. Depth is capped defensively.
+        long total = ArrayHeaderBytes + (long)array.Length * ObjectReferenceBytes;
+        if (depth >= 4) return checked((int)Math.Min(int.MaxValue, total));
+        foreach (var value in array)
+        {
+            total += value switch
+            {
+                null => 0,
+                string text => StringHeaderBytes + (long)text.Length * CharSizeBytes,
+                byte[] bytes => ByteArrayHeaderBytes + bytes.Length,
+                Array nested => EstimateArrayBytes(nested, depth + 1),
+                JsonDocument json => StringHeaderBytes + (long)json.RootElement.GetRawText().Length * CharSizeBytes,
+                JsonElement json => StringHeaderBytes + (long)json.GetRawText().Length * CharSizeBytes,
+                _ => ObjectHeaderBytes + PaddingBytes,
+            };
+            if (total >= int.MaxValue) return int.MaxValue;
+        }
+        return (int)total;
     }
 
     /// <summary>

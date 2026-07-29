@@ -13,7 +13,21 @@ namespace PostgreManagementStudio.Desktop;
 
 public partial class QueryTabView : UserControl
 {
-    private readonly QueryDocument _document; private readonly DestructiveOperationGuard _destructiveOperations; private readonly ApplicationSettings _settings; private IResultSession? _session; private ShellConnectionInfo? _connection; private bool _initializing = true; private bool _isUnloaded; public event EventHandler? DirtyChanged; public event EventHandler? WorkspaceStateChanged;
+    private readonly QueryDocument _document;
+    private readonly DestructiveOperationGuard _destructiveOperations;
+    private readonly ApplicationSettings _settings;
+    private readonly IPerformanceDiagnostics _performanceDiagnostics;
+    private readonly ResultDisplayPageService _resultPages = new();
+    private readonly LatestRequestCoordinator<IReadOnlyList<CompletionItem>> _completionRequests = new();
+    private readonly LatestRequestCoordinator<ObjectSearchBatch> _searchRequests = new();
+    private IResultSession? _session;
+    private ShellConnectionInfo? _connection;
+    private CancellationTokenSource? _resultPageCancellation;
+    private bool _initializing = true;
+    private bool _isUnloaded;
+    private long _documentVersion;
+    public event EventHandler? DirtyChanged;
+    public event EventHandler? WorkspaceStateChanged;
     private readonly BackupRestoreOperationService _backupRestore;
     private readonly PostgreSqlToolDiscoveryService _backupTools;
     private readonly BackupInspectionService _backupInspection;
@@ -21,8 +35,43 @@ public partial class QueryTabView : UserControl
     private readonly DocumentFileService _fileService = new(); private SqlDocument _file = new() { DisplayName = "Query" };
     public QueryTabView(QueryDocument document, DestructiveOperationGuard destructiveOperations,
         ApplicationSettings settings, BackupRestoreOperationService backupRestore,
-        PostgreSqlToolDiscoveryService backupTools, BackupInspectionService backupInspection)
-    { InitializeComponent(); _document = document; _destructiveOperations = destructiveOperations; _settings = settings; _backupRestore = backupRestore; _backupTools = backupTools; _backupInspection = backupInspection; _document.ExecutionStateChanged += Document_ExecutionStateChanged; Unloaded += async (_, _) => { _isUnloaded = true; _document.ExecutionStateChanged -= Document_ExecutionStateChanged; if (_connection is not null) _connection.Session.StateChanged -= RecoverySession_StateChanged; try { await _backupController.DisposeAsync(); } catch (Exception ex) { System.Diagnostics.Trace.WriteLine($"Query workspace cleanup failed: {SecretRedactor.Redact(ex.Message)}"); } }; SqlText.Text = document.SqlText; DatabaseText.Text = document.Database; _file = new SqlDocument { DisplayName = document.Title }; _initializing = false; UpdateCommandState(); }
+        PostgreSqlToolDiscoveryService backupTools, BackupInspectionService backupInspection,
+        IPerformanceDiagnostics performanceDiagnostics)
+    {
+        InitializeComponent();
+        _document = document;
+        _destructiveOperations = destructiveOperations;
+        _settings = settings;
+        _backupRestore = backupRestore;
+        _backupTools = backupTools;
+        _backupInspection = backupInspection;
+        _performanceDiagnostics = performanceDiagnostics;
+        _document.ExecutionStateChanged += Document_ExecutionStateChanged;
+        Unloaded += QueryTabView_Unloaded;
+        SqlText.Text = document.SqlText;
+        DatabaseText.Text = document.Database;
+        _file = new SqlDocument { DisplayName = document.Title };
+        _initializing = false;
+        UpdateCommandState();
+    }
+
+    private async void QueryTabView_Unloaded(object sender, RoutedEventArgs e)
+    {
+        _isUnloaded = true;
+        _document.ExecutionStateChanged -= Document_ExecutionStateChanged;
+        if (_connection is not null) _connection.Session.StateChanged -= RecoverySession_StateChanged;
+        _resultPageCancellation?.Cancel();
+        _resultPageCancellation?.Dispose();
+        await DisposeResultTabStatesAsync();
+        await _completionRequests.DisposeAsync();
+        await _searchRequests.DisposeAsync();
+        try { await _backupController.DisposeAsync(); }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.WriteLine(
+                $"Query workspace cleanup failed: {SecretRedactor.Redact(ex.Message)}");
+        }
+    }
 
     public QueryDocument Document => _document;
     public ShellConnectionInfo? Connection => _connection;
@@ -144,17 +193,17 @@ public partial class QueryTabView : UserControl
                 if (session.Status == ResultSessionStatus.Completed)
                 {
                     _session = session;
+                    await DisposeResultTabStatesAsync();
                     ResultTabs.Items.Clear();
                     for (var resultIndex = 0; resultIndex < session.ResultSets.Count; resultIndex++)
                     {
                         var store = session.ResultSets[resultIndex];
-                        var rows = await store.GetRowsAsync(0, checked((int)store.LoadedRowCount), generationToken);
-                        ResultTabs.Items.Add(CreateResultTab(store, rows));
+                        ResultTabs.Items.Add(await CreateResultTabAsync(store, generationToken));
                     }
+                    if (ResultTabs.Items.Count > 0) ResultTabs.SelectedIndex = 0;
                     if (session.WasTruncated) output.AppendLine($"Results truncated: displaying {session.RetainedRowCount:N0} of {session.ReceivedRowCount:N0} rows ({session.TruncationReason}).");
                     else if (session.ReceivedRowCount >= _settings.ResultWarningThreshold) output.AppendLine($"Large result warning: {session.ReceivedRowCount:N0} rows were loaded.");
                 }
-                if (session.ResultSets.Count > 0) ResultSummary.Text = string.Join(" | ", session.ResultSets.Select((s, i) => $"Results {i + 1}: {s.LoadedRowCount:N0} displayed / {s.FinalRowCount:N0} received · {s.Schema.Columns.Count} columns"));
                 HighlightErrorPosition(session.Error, selected);
                 if (session.Status == ResultSessionStatus.Failed && session.Error?.Kind == DatabaseErrorKind.ConnectionLost)
                     _connection?.Session.ReportFailure(
@@ -198,27 +247,181 @@ public partial class QueryTabView : UserControl
         SqlText.Select(offset, Math.Min(1, SqlText.Text.Length - offset));
         SqlText.Focus();
     }
-    private TabItem CreateResultTab(IResultSetStore store, IReadOnlyList<ResultRow> rows)
+    private async Task<TabItem> CreateResultTabAsync(
+        IResultSetStore store,
+        CancellationToken cancellationToken)
     {
-        var view = new DataGrid { AutoGenerateColumns = false, IsReadOnly = true, CanUserResizeColumns = true, SelectionUnit = DataGridSelectionUnit.CellOrRowHeader, HeadersVisibility = DataGridHeadersVisibility.All, EnableRowVirtualization = true, EnableColumnVirtualization = true };
-        var state = new ResultTabState(store.Schema, rows, view);
-        view.Sorting += (_, e) => { e.Handled = true; var ordinal = view.Columns.IndexOf(e.Column) - 1; if (ordinal >= 0) { var direction = e.Column.SortDirection == ListSortDirection.Ascending ? SortDirection.Descending : SortDirection.Ascending; state.ViewState = state.ViewState with { Sorts = new[] { new SortDescriptor(ordinal, direction, NullPlacement.Last, 0) } }; ApplyResultView(state); e.Column.SortDirection = direction == SortDirection.Ascending ? ListSortDirection.Ascending : ListSortDirection.Descending; } };
+        var view = new DataGrid
+        {
+            AutoGenerateColumns = false,
+            IsReadOnly = true,
+            CanUserResizeColumns = true,
+            SelectionUnit = DataGridSelectionUnit.CellOrRowHeader,
+            HeadersVisibility = DataGridHeadersVisibility.All,
+            EnableRowVirtualization = true,
+            EnableColumnVirtualization = true,
+        };
+        VirtualizingPanel.SetIsVirtualizing(view, true);
+        VirtualizingPanel.SetVirtualizationMode(view, VirtualizationMode.Recycling);
+        ScrollViewer.SetIsDeferredScrollingEnabled(view, true);
+        var state = new ResultTabState(store, view);
+        view.Sorting += async (_, e) =>
+        {
+            e.Handled = true;
+            var ordinal = view.Columns.IndexOf(e.Column) - 1;
+            if (ordinal < 0) return;
+            var direction = e.Column.SortDirection == ListSortDirection.Ascending
+                ? SortDirection.Descending
+                : SortDirection.Ascending;
+            state.ViewState = state.ViewState with
+            {
+                Sorts = new[] { new SortDescriptor(ordinal, direction, NullPlacement.Last, 0) },
+            };
+            await ApplyResultViewAsync(state, TimeSpan.Zero);
+            e.Column.SortDirection = direction == SortDirection.Ascending
+                ? ListSortDirection.Ascending
+                : ListSortDirection.Descending;
+        };
         view.Columns.Add(new DataGridTextColumn { Header = "#", Binding = new System.Windows.Data.Binding("RowIndex"), Width = 55 });
-        for (var column = 0; column < store.Schema.Columns.Count; column++) view.Columns.Add(new DataGridTextColumn { Header = $"{store.Schema.Columns[column].Name}\n{store.Schema.Columns[column].PostgreSqlTypeName}", Binding = new System.Windows.Data.Binding($"Values[{column}]"), Width = new DataGridLength(1, DataGridLengthUnitType.Star), MinWidth = 80, MaxWidth = 420 });
-        state.Apply(rows.Select((row, index) => new GridRow(index, row.Cells.Select((cell, i) => new DefaultResultValueFormatter().FormatForDisplay(cell, store.Schema.Columns[i], new(_settings.CellDisplayLimit))).ToArray())).ToArray()); return new TabItem { Header = $"Results {store.ResultSetIndex + 1}", Content = view, Tag = state };
+        for (var column = 0; column < store.Schema.Columns.Count; column++)
+            view.Columns.Add(new DataGridTextColumn
+            {
+                Header = $"{store.Schema.Columns[column].Name}\n{store.Schema.Columns[column].PostgreSqlTypeName}",
+                Binding = new System.Windows.Data.Binding($"Values[{column}]"),
+                Width = new DataGridLength(1, DataGridLengthUnitType.Star),
+                MinWidth = 80,
+                MaxWidth = 420,
+            });
+        await LoadResultPageAsync(state, 0, cancellationToken);
+        return new TabItem
+        {
+            Header = $"Results {store.ResultSetIndex + 1}",
+            Content = view,
+            Tag = state,
+        };
     }
-    private void ResultSearch_Click(object sender, RoutedEventArgs e) { if (ResultTabs.SelectedItem is TabItem { Tag: ResultTabState state }) { state.ViewState = state.ViewState with { Search = new(ResultSearchText.Text) }; ApplyResultView(state); } }
+    private async void ResultSearch_Click(object sender, RoutedEventArgs e)
+    {
+        if (ResultTabs.SelectedItem is not TabItem { Tag: ResultTabState state }) return;
+        state.ViewState = state.ViewState with { Search = new(ResultSearchText.Text) };
+        await ApplyResultViewAsync(state, TimeSpan.FromMilliseconds(200));
+    }
     public void ShowResultSearch() { ResultSearchPanel.Visibility = Visibility.Visible; ResultSearchText.Focus(); }
     public void ShowOutput(int index) { OutputTabs.SelectedIndex = Math.Clamp(index, 0, 2); }
-    public void ClearResultView() { ResultSearchText.Clear(); if (ResultTabs.SelectedItem is TabItem { Tag: ResultTabState state }) { state.ViewState = ResultViewState.Empty; ApplyResultView(state); foreach (var c in state.Grid.Columns) c.SortDirection = null; } }
-    private void ApplyResultView(ResultTabState state) { var result = new ResultViewTransformationService().Transform(state.Schema, state.Rows, state.ViewState); if (result.Error is not null) { MessagesText.Text = result.Error; return; } state.Grid.ItemsSource = result.VisibleRowIndexes.Select(i => state.DisplayRows[i]).ToArray(); ResultSummary.Text = $"Visible: {result.VisibleRowIndexes.Count:N0} / {state.Rows.Count:N0}"; }
+    public void ClearResultView()
+    {
+        ResultSearchText.Clear();
+        if (ResultTabs.SelectedItem is not TabItem { Tag: ResultTabState state }) return;
+        state.ViewState = ResultViewState.Empty;
+        state.Grid.ItemsSource = state.DisplayRows;
+        foreach (var column in state.Grid.Columns) column.SortDirection = null;
+        UpdateResultPageSummary(state);
+    }
+
+    private async Task ApplyResultViewAsync(ResultTabState state, TimeSpan debounce)
+    {
+        var pageVersion = state.PageVersion;
+        var result = await state.TransformRequests.RunAsync(
+            pageVersion,
+            debounce,
+            token => new ResultViewTransformationService().TransformAsync(
+                state.Store.Schema,
+                state.SourceRows,
+                state.ViewState,
+                token));
+        if (!result.Applied || result.ContextVersion != state.PageVersion || result.Value is null) return;
+        if (result.Value.Error is not null)
+        {
+            MessagesText.Text = result.Value.Error;
+            return;
+        }
+        state.Grid.ItemsSource = result.Value.VisibleRowIndexes.Select(index => state.DisplayRows[index]).ToArray();
+        ResultSummary.Text =
+            $"Page matches: {result.Value.VisibleRowIndexes.Count:N0} / {state.SourceRows.Count:N0} · " +
+            PageRange(state);
+    }
+
+    private async Task LoadResultPageAsync(
+        ResultTabState state,
+        long startRowIndex,
+        CancellationToken cancellationToken)
+    {
+        _resultPageCancellation?.Cancel();
+        _resultPageCancellation?.Dispose();
+        _resultPageCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var operation = new PerformanceOperation(
+            startRowIndex == 0 ? "ResultGrid.FirstPage" : "ResultGrid.Page",
+            _performanceDiagnostics,
+            _connection?.Session.LogicalSessionId,
+            _connection?.Session.Snapshot.GenerationId);
+        try
+        {
+            var page = await _resultPages.LoadAsync(
+                state.Store,
+                startRowIndex,
+                ResultDisplayPageService.DefaultPageSize,
+                _settings.CellDisplayLimit,
+                _resultPageCancellation.Token);
+            state.Apply(page);
+            operation.RowsRead = page.SourceRows.Count;
+            operation.RowsDisplayed = page.DisplayRows.Count;
+            operation.BytesProcessed = state.Store.EstimatedMemoryBytes;
+            UpdateResultPageSummary(state);
+        }
+        catch (OperationCanceledException)
+        {
+            operation.Cancel();
+        }
+        catch
+        {
+            operation.Fail("result_rendering");
+            throw;
+        }
+    }
+
+    private async void PreviousResultPage_Click(object sender, RoutedEventArgs e)
+    {
+        if (ResultTabs.SelectedItem is not TabItem { Tag: ResultTabState state } || state.Page is null) return;
+        await LoadResultPageAsync(
+            state,
+            Math.Max(0, state.Page.StartRowIndex - state.Page.PageSize),
+            _connection?.Session.GenerationToken ?? CancellationToken.None);
+    }
+
+    private async void NextResultPage_Click(object sender, RoutedEventArgs e)
+    {
+        if (ResultTabs.SelectedItem is not TabItem { Tag: ResultTabState state } || state.Page is null) return;
+        await LoadResultPageAsync(
+            state,
+            state.Page.StartRowIndex + state.Page.PageSize,
+            _connection?.Session.GenerationToken ?? CancellationToken.None);
+    }
+
+    private void UpdateResultPageSummary(ResultTabState state)
+    {
+        if (state.Page is null) return;
+        ResultSummary.Text =
+            $"{PageRange(state)} · {state.Store.ReceivedRowCount:N0} read · " +
+            $"{state.Store.LoadedRowCount:N0} retained" +
+            (state.Store.WasTruncated ? $" · display truncated ({state.Store.TruncationReason})" : string.Empty) +
+            (state.Page.IncompletePreviewCount > 0
+                ? $" · {state.Page.IncompletePreviewCount:N0} bounded cell previews"
+                : string.Empty);
+        PreviousResultPageButton.IsEnabled = state.Page.HasPrevious;
+        NextResultPageButton.IsEnabled = state.Page.HasNext;
+    }
+
+    private static string PageRange(ResultTabState state) =>
+        state.Page is null || state.Page.SourceRows.Count == 0
+            ? "Rows 0 / 0"
+            : $"Rows {state.Page.StartRowIndex + 1:N0}–{state.Page.EndRowIndex + 1:N0} / {state.Page.RetainedRowCount:N0}";
     public void CopyResults(bool includeHeaders) => CopyGrid(includeHeaders);
     public async Task ExportResultsAsync()
     {
         if (_session is null || ResultTabs.SelectedIndex < 0 || ResultTabs.SelectedIndex >= _session.ResultSets.Count) return;
         var dialog = new SaveFileDialog { Filter = "CSV (*.csv)|*.csv|TSV (*.tsv)|*.tsv|JSON (*.json)|*.json|SQL inserts (*.sql)|*.sql", DefaultExt = ".csv", AddExtension = true, FileName = "query-results" }; if (dialog.ShowDialog() != true) return; var format = dialog.FilterIndex switch { 2 => ResultExportFormat.Tsv, 3 => ResultExportFormat.Json, 4 => ResultExportFormat.SqlInsert, _ => ResultExportFormat.Csv }; try { var outcome = await new ResultExportService().ExportAsync(new ResultExportRequest(_session.ResultSets[ResultTabs.SelectedIndex], null, format, ResultExportScope.EntireResult, dialog.FileName, new()), new Progress<ResultExportProgress>(p => StatusText.Text = $"{p.Phase}: {p.RowsWritten:N0}")); StatusText.Text = outcome.Completed ? $"Exported {outcome.RowsWritten:N0} rows to {outcome.Path}" : "Export cancelled."; } catch (Exception ex) { MessagesText.Text = $"Export failed: {ex.Message}"; }
     }
-    private void CopyGrid(bool headers) { if (ResultTabs.SelectedItem is not TabItem { Tag: ResultTabState state }) return; var grid = state.Grid; var lines = new List<string>(); if (headers) lines.Add(string.Join("\t", grid.Columns.Skip(1).Select(c => c.Header?.ToString()?.Split('\n')[0]))); foreach (var item in grid.SelectedItems.Cast<GridRow>()) lines.Add(string.Join("\t", item.Values)); if (lines.Count > 0) Clipboard.SetText(string.Join(Environment.NewLine, lines)); }
+    private void CopyGrid(bool headers) { if (ResultTabs.SelectedItem is not TabItem { Tag: ResultTabState state }) return; var grid = state.Grid; var lines = new List<string>(); if (headers) lines.Add(string.Join("\t", grid.Columns.Skip(1).Select(c => c.Header?.ToString()?.Split('\n')[0]))); foreach (var item in grid.SelectedItems.Cast<FormattedResultRow>()) lines.Add(string.Join("\t", item.Values)); if (lines.Count > 0) Clipboard.SetText(string.Join(Environment.NewLine, lines)); }
     public async Task OpenFileAsync() { var dialog = new OpenFileDialog { Filter = "SQL files (*.sql)|*.sql|All files (*.*)|*.*", Multiselect = false }; if (dialog.ShowDialog() != true) return; try { var loaded = await _fileService.LoadAsync(dialog.FileName); _initializing = true; _file = SqlDocument.FromLoaded(loaded); SqlText.Text = _file.Text; _document.SqlText = _file.Text; _document.MarkDirty(false); _initializing = false; StatusText.Text = $"Opened {dialog.FileName}"; DirtyChanged?.Invoke(this, EventArgs.Empty); } catch (Exception ex) { _initializing = false; MessagesText.Text = ex.Message; OutputTabs.SelectedIndex = 1; } }
     public async Task<bool> SaveAsync() => _file.FilePath is null ? await SaveAsAsync() : await SaveToAsync(_file.FilePath);
     public async Task<bool> SaveAsAsync() { var dialog = new SaveFileDialog { Filter = "SQL files (*.sql)|*.sql|All files (*.*)|*.*", DefaultExt = ".sql", AddExtension = true, FileName = Path.GetFileName(_file.FilePath ?? _document.Title) }; return dialog.ShowDialog() == true && await SaveToAsync(dialog.FileName); }
@@ -236,9 +439,48 @@ public partial class QueryTabView : UserControl
     private void CloseFind_Click(object sender, RoutedEventArgs e) { FindPanel.Visibility = Visibility.Collapsed; SqlText.Focus(); }
     private void ReplaceAll_Click(object sender, RoutedEventArgs e) { if (string.IsNullOrEmpty(FindText.Text)) return; var service = new FindReplaceService(); var result = service.ReplaceAll(SqlText.Text, FindText.Text, ReplaceText.Text, new(), out var count); if (count > 0) SqlText.Text = result; StatusText.Text = $"{count} replacements made."; }
     public void GoToLine() { var dialog = new InputDialog("Go to line", "Line number:"); if (dialog.ShowDialog() != true || !int.TryParse(dialog.Value, out var line) || line < 1) { StatusText.Text = "Enter a positive line number."; return; } var index = 0; for (var i = 1; i < line && index < SqlText.Text.Length; i++) index = SqlText.Text.IndexOf('\n', index) + 1; if (index <= 0 && line > 1) { StatusText.Text = "Line is beyond the document."; return; } SqlText.Focus(); SqlText.CaretIndex = index; }
-    private void SqlText_TextChanged(object sender, TextChangedEventArgs e) { _document.SqlText = SqlText.Text; if (_initializing) return; _document.MarkDirty(); DirtyChanged?.Invoke(this, EventArgs.Empty); WorkspaceStateChanged?.Invoke(this, EventArgs.Empty); }
+    private void SqlText_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        _document.SqlText = SqlText.Text;
+        Interlocked.Increment(ref _documentVersion);
+        if (_initializing) return;
+        _document.MarkDirty();
+        DirtyChanged?.Invoke(this, EventArgs.Empty);
+        WorkspaceStateChanged?.Invoke(this, EventArgs.Empty);
+    }
     private void SqlText_SelectionChanged(object sender, RoutedEventArgs e) => WorkspaceStateChanged?.Invoke(this, EventArgs.Empty);
-    private async void UserControl_KeyDown(object sender, System.Windows.Input.KeyEventArgs e) { if (e.Key == System.Windows.Input.Key.Space && System.Windows.Input.Keyboard.Modifiers == System.Windows.Input.ModifierKeys.Control) { var items = await new SqlCompletionEngine().GetCompletionsAsync(SqlText.Text, SqlText.CaretIndex, null); var menu = new ContextMenu(); foreach (var item in items.Take(30)) { var entry = new MenuItem { Header = $"{item.DisplayText} [{item.Kind}]" }; entry.Click += (_, _) => { var start = SqlText.CaretIndex; while (start > 0 && (char.IsLetterOrDigit(SqlText.Text[start - 1]) || SqlText.Text[start - 1] == '_')) start--; SqlText.Select(start, SqlText.CaretIndex - start); SqlText.SelectedText = item.InsertionText; }; menu.Items.Add(entry); } menu.IsOpen = true; e.Handled = true; } }
+    private async void UserControl_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != System.Windows.Input.Key.Space
+            || System.Windows.Input.Keyboard.Modifiers != System.Windows.Input.ModifierKeys.Control)
+            return;
+        var version = Interlocked.Read(ref _documentVersion);
+        var sql = SqlText.Text;
+        var caret = SqlText.CaretIndex;
+        var result = await _completionRequests.RunAsync(
+            version,
+            TimeSpan.Zero,
+            token => new SqlCompletionEngine().GetCompletionsAsync(sql, caret, null, token));
+        if (!result.Applied || result.ContextVersion != Interlocked.Read(ref _documentVersion)
+            || result.Value is null)
+            return;
+        var menu = new ContextMenu();
+        foreach (var item in result.Value.Take(30))
+        {
+            var entry = new MenuItem { Header = $"{item.DisplayText} [{item.Kind}]" };
+            entry.Click += (_, _) =>
+            {
+                var start = SqlText.CaretIndex;
+                while (start > 0 && (char.IsLetterOrDigit(SqlText.Text[start - 1])
+                    || SqlText.Text[start - 1] == '_')) start--;
+                SqlText.Select(start, SqlText.CaretIndex - start);
+                SqlText.SelectedText = item.InsertionText;
+            };
+            menu.Items.Add(entry);
+        }
+        menu.IsOpen = true;
+        e.Handled = true;
+    }
     public async Task BackupDatabaseAsync()
     {
         var dialog = new SaveFileDialog
@@ -332,18 +574,136 @@ public partial class QueryTabView : UserControl
     public async Task ShowActivityMonitorAsync() { try { var snapshot = await new NpgsqlActivityService().LoadSnapshotAsync(CurrentConnectionString(), DateTime.UtcNow.Ticks); ResultSummary.Text = $"Sessions {snapshot.Summary.TotalSessions:N0} · Active {snapshot.Summary.ActiveSessions:N0} · Idle {snapshot.Summary.IdleSessions:N0} · Blocked {snapshot.Summary.BlockedSessions:N0}"; MessagesText.Text = string.Join(Environment.NewLine, snapshot.Sessions.Select(s => $"{s.ProcessId} {s.ClassifiedState} {s.Database} {s.User} {s.Duration:g} {s.Query}")); StatusText.Text = $"Activity snapshot {snapshot.ServerTime:O}"; OutputTabs.SelectedIndex = 1; } catch (Exception ex) { MessagesText.Text = SecretRedactor.Redact(ex.Message); StatusText.Text = "Activity monitor unavailable."; OutputTabs.SelectedIndex = 1; } }
     public async Task RunMaintenanceAsync() { try { var cs = CurrentConnectionString(); var connection = DatabaseConnection.FromConnectionString(cs) with { Database = DatabaseText.Text }; var plan = new MaintenancePlan(MaintenanceOperation.Vacuum, new[] { new MaintenanceTarget(MaintenanceTargetKind.Database, connection.Database) }, new(Analyze: true, Verbose: true), new(18)); var sql = string.Join(Environment.NewLine, plan.Statements); if (!_destructiveOperations.Confirm(new(DestructiveOperationKind.Maintenance, "Maintenance confirmation", connection.Database, $"Run maintenance on a dedicated connection? This may take time and hold locks.{Environment.NewLine}{Environment.NewLine}{sql}", "Cancel before confirmation or wait for PostgreSQL to finish safely."))) return; MessagesText.Text = sql; OutputTabs.SelectedIndex = 1; var result = await new NpgsqlMaintenanceService().ExecuteAsync(cs, plan, new Progress<string>(x => MessagesText.AppendText(x + Environment.NewLine))); StatusText.Text = result.Status; } catch (Exception ex) { MessagesText.Text = SecretRedactor.Redact(ex.Message); StatusText.Text = "Maintenance unavailable."; OutputTabs.SelectedIndex = 1; } }
     public async Task ImportDataAsync() { var dialog = new OpenFileDialog { Filter = "Delimited files (*.csv;*.tsv;*.txt)|*.csv;*.tsv;*.txt|All files (*.*)|*.*" }; if (dialog.ShowDialog() != true) return; var tableDialog = new InputDialog("Import data", "Destination table (public schema):"); if (tableDialog.ShowDialog() != true || string.IsNullOrWhiteSpace(tableDialog.Value)) return; try { var settings = DelimitedFileDetector.Detect(dialog.FileName) with { HasHeader = true }; var header = new DelimitedFileReader().Read(dialog.FileName, settings).FirstOrDefault(); if (header is null) throw new InvalidOperationException("The source file contains no data rows."); var request = new ImportRequest(dialog.FileName, "public", tableDialog.Value, header.Select((name, i) => new ColumnMapping(i, name)).ToArray(), settings, new(ImportStrategy.BatchInsert, Transaction: TransactionMode.AllRows), header.Select(name => new DestinationColumn(name, "text", true)).ToArray()); var result = await new NpgsqlDataTransferService().ImportAsync(CurrentConnectionString(), request, new Progress<ImportProgress>(p => StatusText.Text = $"{p.Phase}: {p.RowsWritten:N0} rows")); StatusText.Text = result.Status; MessagesText.Text = string.Join(Environment.NewLine, result.Errors); OutputTabs.SelectedIndex = 1; } catch (Exception ex) { MessagesText.Text = SecretRedactor.Redact(ex.Message); StatusText.Text = "Import unavailable."; OutputTabs.SelectedIndex = 1; } }
-    public async Task SearchObjectsAsync() { var dialog = new InputDialog("Search database objects", "Name or wildcard:"); if (dialog.ShowDialog() != true || string.IsNullOrWhiteSpace(dialog.Value)) return; try { var batch = await new NpgsqlObjectSearchService().SearchAsync(CurrentConnectionString(), new ObjectSearchOptions(dialog.Value)); ResultSummary.Text = $"Found {batch.Results.Count:N0} objects in {batch.Duration.TotalMilliseconds:N0} ms"; MessagesText.Text = string.Join(Environment.NewLine, batch.Results.Select(x => $"{x.ObjectType} {x.Schema}.{x.ObjectName}")); if (batch.Warnings.Count > 0) MessagesText.AppendText(Environment.NewLine + string.Join(Environment.NewLine, batch.Warnings)); StatusText.Text = batch.LimitReached ? "Search limit reached." : "Search complete."; OutputTabs.SelectedIndex = 1; } catch (OperationCanceledException) { StatusText.Text = "Search cancelled."; } catch (Exception ex) { MessagesText.Text = SecretRedactor.Redact(ex.Message); StatusText.Text = "Search unavailable."; OutputTabs.SelectedIndex = 1; } }
+    public async Task SearchObjectsAsync()
+    {
+        var dialog = new InputDialog("Search database objects", "Name or wildcard:");
+        if (dialog.ShowDialog() != true || string.IsNullOrWhiteSpace(dialog.Value)) return;
+        var generation = _connection?.Session.Snapshot.GenerationId ?? Guid.Empty;
+        var contextVersion = Interlocked.Increment(ref _documentVersion);
+        var connectionString = CurrentConnectionString();
+        var searchText = dialog.Value;
+        var result = await _searchRequests.RunAsync(
+            contextVersion,
+            TimeSpan.FromMilliseconds(200),
+            token => new NpgsqlObjectSearchService().SearchAsync(
+                connectionString,
+                new ObjectSearchOptions(searchText),
+                token),
+            _connection?.Session.GenerationToken ?? CancellationToken.None);
+        if (result.State is LatestRequestState.Cancelled or LatestRequestState.Superseded) return;
+        if (result.State == LatestRequestState.Failed)
+        {
+            MessagesText.Text = SecretRedactor.Redact(result.Error?.Message ?? "Search failed.");
+            StatusText.Text = "Search unavailable.";
+            OutputTabs.SelectedIndex = 1;
+            return;
+        }
+        if (result.Value is not { } batch || generation != _connection?.Session.Snapshot.GenerationId) return;
+        ResultSummary.Text = $"Found {batch.Results.Count:N0} objects in {batch.Duration.TotalMilliseconds:N0} ms";
+        MessagesText.Text = string.Join(Environment.NewLine,
+            batch.Results.Select(item => $"{item.ObjectType} {item.Schema}.{item.ObjectName}"));
+        if (batch.Warnings.Count > 0)
+            MessagesText.AppendText(Environment.NewLine + string.Join(Environment.NewLine, batch.Warnings));
+        StatusText.Text = batch.LimitReached ? "Search limit reached." : "Search complete.";
+        OutputTabs.SelectedIndex = 1;
+    }
     public Task ShowEstimatedPlanAsync() => ShowPlanAsync(PlanType.Estimated);
-    private async Task ShowPlanAsync(PlanType type) { var sql = SqlText.SelectionLength > 0 ? SqlText.SelectedText : SqlText.Text; if (type == PlanType.Actual && !_destructiveOperations.Confirm(new(DestructiveOperationKind.ActualExecutionPlan, "Confirm actual execution plan", DatabaseText.Text, "Actual plan analysis executes the selected SQL; data changes, locks, triggers, and external side effects are possible.", "Use read-only SQL or an explicit transaction with rollback when possible."))) return; try { var request = new ExplainRequest(sql, new(type, Buffers: type == PlanType.Actual, StatementTimeout: type == PlanType.Actual ? TimeSpan.FromSeconds(30) : null)); var plan = await new NpgsqlExecutionPlanService().ExplainAsync(CurrentConnectionString(), request); var summary = PlanMetricsService.Summarize(plan); ResultSummary.Text = $"{type} plan: {summary.NodeCount} nodes · Cost {summary.TotalCost} · Rows {summary.RootRows} · Actual {summary.ActualRows}"; MessagesText.Text = plan.RawJson; PlanTabs.Items.Clear(); PlanTabs.Items.Add(CreatePlanTab(plan)); OutputTabs.SelectedIndex = 2; StatusText.Text = "Execution plan complete."; } catch (Exception ex) { MessagesText.Text = SecretRedactor.Redact(ex.Message); OutputTabs.SelectedIndex = 1; StatusText.Text = "Execution plan unavailable."; } finally { WorkspaceStateChanged?.Invoke(this, EventArgs.Empty); } }
+    private async Task ShowPlanAsync(PlanType type) { var sql = SqlText.SelectionLength > 0 ? SqlText.SelectedText : SqlText.Text; if (type == PlanType.Actual && !_destructiveOperations.Confirm(new(DestructiveOperationKind.ActualExecutionPlan, "Confirm actual execution plan", DatabaseText.Text, "Actual plan analysis executes the selected SQL; data changes, locks, triggers, and external side effects are possible.", "Use read-only SQL or an explicit transaction with rollback when possible."))) return; try { var request = new ExplainRequest(sql, new(type, Buffers: type == PlanType.Actual, StatementTimeout: type == PlanType.Actual ? TimeSpan.FromSeconds(30) : null)); var plan = await new NpgsqlExecutionPlanService().ExplainAsync(CurrentConnectionString(), request); var summary = PlanMetricsService.Summarize(plan); ResultSummary.Text = $"{type} plan: {summary.NodeCount} nodes · Cost {summary.TotalCost} · Rows {summary.RootRows} · Actual {summary.ActualRows}"; MessagesText.Text = plan.RawJson.Length <= 65_536 ? plan.RawJson : plan.RawJson[..65_536] + Environment.NewLine + "… Raw-plan preview limited to 64 KiB."; PlanTabs.Items.Clear(); PlanTabs.Items.Add(CreatePlanTab(plan)); OutputTabs.SelectedIndex = 2; StatusText.Text = "Execution plan complete."; } catch (Exception ex) { MessagesText.Text = SecretRedactor.Redact(ex.Message); OutputTabs.SelectedIndex = 1; StatusText.Text = "Execution plan unavailable."; } finally { WorkspaceStateChanged?.Invoke(this, EventArgs.Empty); } }
     private string CurrentConnectionString() => IsRecoveryConnected && !string.IsNullOrWhiteSpace(_document.ConnectionString)
         ? _document.ConnectionString
         : throw new InvalidOperationException("This query is disconnected or degraded. Reconnect before running database operations.");
     private TabItem CreatePlanTab(ExecutionPlanDocument plan)
-    { var panel = new DockPanel(); var raw = new TextBox { Text = plan.RawJson, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.NoWrap, FontFamily = new System.Windows.Media.FontFamily("Consolas"), VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, Height = 180 }; DockPanel.SetDock(raw, Dock.Bottom); panel.Children.Add(raw); var tree = new TreeView { Margin = new Thickness(4) }; tree.Items.Add(CreatePlanTreeNode(plan.Root, "root")); panel.Children.Add(tree); return new TabItem { Header = "Execution Plan", Content = panel, Tag = plan }; }
-    private static TreeViewItem CreatePlanTreeNode(ExecutionPlanNode node, string path)
-    { var title = $"{node.NodeType}{(node.RelationName is null ? "" : " — " + node.RelationName)} · cost {node.TotalCost?.ToString("N2") ?? "n/a"} · rows {node.PlanRows?.ToString("N0") ?? "n/a"}{(node.ActualTime is null ? "" : $" · actual {node.ActualTime:N2} ms")}"; var item = new TreeViewItem { Header = title, ToolTip = $"Node {path}; actual rows {node.ActualRows?.ToString("N0") ?? "unavailable"}; loops {node.Loops?.ToString("N0") ?? "unavailable"}" }; for (var i = 0; i < node.Children.Count; i++) item.Items.Add(CreatePlanTreeNode(node.Children[i], path + "." + i)); return item; }
-    private sealed record GridRow(long RowIndex, IReadOnlyList<string> Values);
-    private sealed class ResultTabState(ResultSetSchema schema, IReadOnlyList<ResultRow> rows, DataGrid grid)
-    { public ResultSetSchema Schema { get; } = schema; public IReadOnlyList<ResultRow> Rows { get; } = rows; public DataGrid Grid { get; } = grid; public GridRow[] DisplayRows { get; private set; } = Array.Empty<GridRow>(); public ResultViewState ViewState { get; set; } = ResultViewState.Empty; public void Apply(GridRow[] rows) { DisplayRows = rows; Grid.ItemsSource = rows; } }
+    {
+        const int maximumRawPreview = 64 * 1024;
+        var rawIncomplete = plan.RawJson.Length > maximumRawPreview;
+        var raw = new TextBox
+        {
+            Text = rawIncomplete
+                ? plan.RawJson[..maximumRawPreview] + Environment.NewLine +
+                    "… Raw-plan preview limited to 64 KiB."
+                : plan.RawJson,
+            IsReadOnly = true,
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.NoWrap,
+            FontFamily = new System.Windows.Media.FontFamily("Consolas"),
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Height = 180,
+        };
+        var panel = new DockPanel();
+        DockPanel.SetDock(raw, Dock.Bottom);
+        panel.Children.Add(raw);
+        var tree = new TreeView { Margin = new Thickness(4) };
+        var remainingNodes = 500;
+        tree.Items.Add(CreatePlanTreeNode(plan.Root, "root", 0, ref remainingNodes));
+        panel.Children.Add(tree);
+        if (rawIncomplete || remainingNodes == 0)
+            ResultSummary.Text += " · plan preview bounded";
+        return new TabItem { Header = "Execution Plan", Content = panel, Tag = plan };
+    }
+
+    private static TreeViewItem CreatePlanTreeNode(
+        ExecutionPlanNode node,
+        string path,
+        int depth,
+        ref int remainingNodes)
+    {
+        remainingNodes--;
+        var title =
+            $"{node.NodeType}{(node.RelationName is null ? "" : " — " + node.RelationName)} · " +
+            $"cost {node.TotalCost?.ToString("N2") ?? "n/a"} · rows {node.PlanRows?.ToString("N0") ?? "n/a"}" +
+            $"{(node.ActualTime is null ? "" : $" · actual {node.ActualTime:N2} ms")}";
+        var item = new TreeViewItem
+        {
+            Header = title,
+            ToolTip =
+                $"Node {path}; actual rows {node.ActualRows?.ToString("N0") ?? "unavailable"}; " +
+                $"loops {node.Loops?.ToString("N0") ?? "unavailable"}",
+        };
+        if (depth >= 24 || remainingNodes <= 0)
+        {
+            if (node.Children.Count > 0)
+                item.Items.Add(new TreeViewItem
+                {
+                    Header = "Additional plan nodes omitted from preview.",
+                    IsEnabled = false,
+                });
+            return item;
+        }
+        for (var index = 0; index < node.Children.Count && remainingNodes > 0; index++)
+            item.Items.Add(CreatePlanTreeNode(
+                node.Children[index],
+                path + "." + index,
+                depth + 1,
+                ref remainingNodes));
+        return item;
+    }
+    private async Task DisposeResultTabStatesAsync()
+    {
+        foreach (var state in ResultTabs.Items.OfType<TabItem>()
+            .Select(item => item.Tag).OfType<ResultTabState>())
+            await state.TransformRequests.DisposeAsync();
+    }
+
+    private sealed class ResultTabState(IResultSetStore store, DataGrid grid)
+    {
+        public IResultSetStore Store { get; } = store;
+        public DataGrid Grid { get; } = grid;
+        public ResultDisplayPage? Page { get; private set; }
+        public IReadOnlyList<ResultRow> SourceRows => Page?.SourceRows ?? Array.Empty<ResultRow>();
+        public IReadOnlyList<FormattedResultRow> DisplayRows =>
+            Page?.DisplayRows ?? Array.Empty<FormattedResultRow>();
+        public ResultViewState ViewState { get; set; } = ResultViewState.Empty;
+        public LatestRequestCoordinator<ResultViewResult> TransformRequests { get; } = new();
+        public long PageVersion { get; private set; }
+
+        public void Apply(ResultDisplayPage page)
+        {
+            Page = page;
+            ViewState = ResultViewState.Empty;
+            PageVersion++;
+            Grid.ItemsSource = page.DisplayRows;
+        }
+    }
     private sealed class InputDialog : Window { public string Value => Box.Text; private readonly TextBox Box = new(); public InputDialog(string title, string prompt) { Title = title; Width = 300; Height = 130; WindowStartupLocation = WindowStartupLocation.CenterOwner; var panel = new StackPanel { Margin = new Thickness(10) }; panel.Children.Add(new TextBlock { Text = prompt }); panel.Children.Add(Box); var button = new Button { Content = "OK", IsDefault = true, Margin = new Thickness(0, 8, 0, 0) }; button.Click += (_, _) => DialogResult = true; panel.Children.Add(button); Content = panel; } }
 }

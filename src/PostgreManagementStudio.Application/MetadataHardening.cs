@@ -325,10 +325,17 @@ public sealed class HardenedMetadataService(
             ObjectMetadataBatch batch => batch.Objects.Count,
             _ => 0,
         };
-        _diagnostics.Record(new(result.RequestId, context.ConnectionProfileId, context.Database,
-            parent?.ToString() ?? "database", operation, startedAt, DateTimeOffset.UtcNow, rows,
-            result.CacheHit, cancellationToken.IsCancellationRequested,
-            result.State, result.Error?.Category, result.Error?.SqlState));
+        try
+        {
+            _diagnostics.Record(new(result.RequestId, context.ConnectionProfileId, context.Database,
+                parent?.ToString() ?? "database", operation, startedAt, DateTimeOffset.UtcNow, rows,
+                result.CacheHit, cancellationToken.IsCancellationRequested,
+                result.State, result.Error?.Category, result.Error?.SqlState));
+        }
+        catch (Exception ex)
+        {
+            Trace.WriteLine($"metadata diagnostics_failure={ex.GetType().Name}");
+        }
         return result;
     }
 }

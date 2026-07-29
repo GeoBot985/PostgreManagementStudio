@@ -295,7 +295,7 @@ internal sealed class ResultSetStore : IResultSetStore, IResultSetWriter
 
     public ValueTask CancelAsync(CancellationToken cancellationToken)
     {
-        if (Interlocked.Exchange(ref _disposed, 0) == 1)
+        if (Volatile.Read(ref _disposed) == 1)
         {
             // Already disposed; treat as no-op per idempotent semantics.
             return ValueTask.CompletedTask;

@@ -1,4 +1,6 @@
 using System.IO;
+using System.Diagnostics;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -116,6 +118,28 @@ public sealed class ShellWorkflowTests
             var documents = provider.GetRequiredService<QueryTabManager>().Documents;
             Assert.Equal(2, documents.Count);
             Assert.Equal("SQLQuery2.sql", documents[1].Title);
+        });
+    }
+
+    [Fact]
+    [Trait("Category", "UiIntegration")]
+    public void StartupAndCleanShutdownStayBoundedAndStopTheOwnedTimer()
+    {
+        RunSta((window, _) =>
+        {
+            var stopwatch = Stopwatch.StartNew();
+            window.Show();
+            window.UpdateLayout();
+            stopwatch.Stop();
+            Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(5),
+                $"Main window became interactive in {stopwatch.Elapsed}.");
+
+            window.Close();
+            PumpDispatcherUntil(() => !window.IsVisible, TimeSpan.FromSeconds(6));
+            var timer = Assert.IsType<DispatcherTimer>(
+                typeof(MainWindow).GetField("_statusTimer",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window));
+            Assert.False(timer.IsEnabled);
         });
     }
 

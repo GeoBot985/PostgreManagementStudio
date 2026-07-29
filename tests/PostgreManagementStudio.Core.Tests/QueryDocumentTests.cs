@@ -284,6 +284,30 @@ public sealed class QueryDocumentTests
         Assert.Equal(QueryDocumentExecutionState.Completed, doc.State);
     }
 
+    [Fact]
+    public async Task HundredEditorOpenCloseCycleReleasesManagerOwnershipWithinBudget()
+    {
+        var manager = new QueryTabManager(new ResultExecutionService(new NoOpExecutor()));
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var references = new List<WeakReference>();
+        for (var index = 0; index < 100; index++)
+        {
+            var document = manager.Open(ConnectionA, "db_a");
+            references.Add(new WeakReference(document));
+            await document.DisposeAsync();
+            Assert.True(manager.TryClose(document, discardChanges: true));
+        }
+        stopwatch.Stop();
+
+        Assert.Empty(manager.Documents);
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(2),
+            $"100 editor lifecycle operations took {stopwatch.Elapsed}.");
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        Assert.InRange(references.Count(reference => reference.IsAlive), 0, 1);
+    }
+
     private static QueryDocument Document(IQueryExecutor executor, string connection)
         => new(new ResultExecutionService(executor), "Query 1")
         {

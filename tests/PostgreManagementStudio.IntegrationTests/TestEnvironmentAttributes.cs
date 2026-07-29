@@ -38,3 +38,15 @@ public sealed class ExternalToolsFactAttribute : SeededPostgreSqlFactAttribute
             Skip = "PostgreSQL external tools were not configured by the release regression environment.";
     }
 }
+
+public sealed class LargeDatasetFactAttribute : SeededPostgreSqlFactAttribute
+{
+    public LargeDatasetFactAttribute()
+    {
+        if (!string.Equals(
+            Environment.GetEnvironmentVariable("PMS_PERF_DATASET"),
+            "1",
+            StringComparison.Ordinal))
+            Skip = "Run scripts/test-release.ps1 -IncludeLargeDataset for large-schema performance tests.";
+    }
+}

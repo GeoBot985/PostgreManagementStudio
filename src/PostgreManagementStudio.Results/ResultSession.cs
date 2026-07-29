@@ -117,30 +117,29 @@ internal sealed class ResultSession : IResultSession
         }
     }
 
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) == 1) return ValueTask.CompletedTask;
+        if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+        ResultSetStore[] stores;
         lock (_stateLock)
         {
             var current = (ResultSessionStatus)Volatile.Read(ref _status);
-            if (current == ResultSessionStatus.Disposed) return ValueTask.CompletedTask;
+            if (current == ResultSessionStatus.Disposed) return;
             if (!LifecycleGuards.IsValid(current, ResultSessionStatus.Disposed))
                 throw new InvalidOperationException($"Cannot dispose session in status {current}.");
             Volatile.Write(ref _status, (int)ResultSessionStatus.Disposed);
-
-            // Dispose all stores in reverse creation order.
-            for (int i = _stores.Length - 1; i >= 0; i--)
-            {
-                try { _stores[i].DisposeAsync().AsTask().GetAwaiter().GetResult(); }
-                catch (Exception ex) { _logger?.LogWarning(ex, "Error disposing result set {Index}", _stores[i].ResultSetIndex); }
-            }
+            stores = _stores;
             _stores = Array.Empty<ResultSetStore>();
             _storesByIndex.Clear();
             _notices.Clear();
             Interlocked.Exchange(ref _memoryBytes, 0);
         }
+        for (var index = stores.Length - 1; index >= 0; index--)
+        {
+            try { await stores[index].DisposeAsync().ConfigureAwait(false); }
+            catch (Exception ex) { _logger?.LogWarning(ex, "Error disposing result set {Index}", stores[index].ResultSetIndex); }
+        }
         _logger?.LogTrace("Result session disposed ({SessionId})", _id);
-        return ValueTask.CompletedTask;
     }
 
     // -----------------------------------------------------------------------

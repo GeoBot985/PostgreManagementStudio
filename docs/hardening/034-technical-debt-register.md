@@ -115,3 +115,21 @@ New evidence-based blockers:
   and elevated full-service restart automation remain.
 - `TD-034-005` (packaging) and `TD-034-017` (SDK pinning) are not Sprint 41
   recovery requirements and remain open.
+
+## Sprint 42 updates
+
+- Result binding now pages and formats only the visible 250-row page; WPF
+  virtualisation, bounded widths and value-aware previews remove eager
+  off-screen formatting and unbounded binary/JSON/array display work.
+- Object Explorer visual construction is lazy and the 1,000-table fixture
+  confirms two database round trips for root plus one schema level.
+- Completion and search use one cancellation/version coordinator; recurring
+  health work is non-overlapping and all tab-owned operations stop on unload.
+- Metadata and regex caches have enforced capacities and documented
+  invalidation. Connection creation and pool clearing are observable without
+  sensitive tags.
+- Repeated editor, result, connection, cancellation and shutdown tests close
+  the avoidable retention paths identified by the Sprint 42 audit.
+- Multi-hour workstation soaks, remote network shaping, installer packaging
+  (`TD-034-005`) and SDK pinning (`TD-034-017`) remain environment/release
+  campaigns rather than hidden completion claims.

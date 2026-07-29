@@ -22,6 +22,7 @@ public partial class MainWindow : Window
     private readonly BackupInspectionService _backupInspection;
     private readonly IConnectionProbe _connectionProbe;
     private readonly IConnectionRecoveryDiagnostics _connectionDiagnostics;
+    private readonly IPerformanceDiagnostics _performanceDiagnostics;
     private readonly HashSet<ConnectionRecoverySession> _recoverySessions = [];
     private readonly DispatcherTimer _statusTimer;
     private CancellationTokenSource? _metadataCancellation;
@@ -29,6 +30,7 @@ public partial class MainWindow : Window
     private bool _shutdownInProgress;
     private bool _shutdownApproved;
     private int _statusTicks;
+    private int _healthCheckRunning;
 
     public MainWindow(
         QueryTabManager tabs,
@@ -39,8 +41,12 @@ public partial class MainWindow : Window
         PostgreSqlToolDiscoveryService backupTools,
         BackupInspectionService backupInspection,
         IConnectionProbe connectionProbe,
-        IConnectionRecoveryDiagnostics connectionDiagnostics)
+        IConnectionRecoveryDiagnostics connectionDiagnostics,
+        IPerformanceDiagnostics performanceDiagnostics)
     {
+        using var performance = new PerformanceOperation(
+            "MainWindowConstruction",
+            performanceDiagnostics);
         InitializeComponent();
         _tabs = tabs;
         _objectExplorer = objectExplorer;
@@ -51,6 +57,7 @@ public partial class MainWindow : Window
         _backupInspection = backupInspection;
         _connectionProbe = connectionProbe;
         _connectionDiagnostics = connectionDiagnostics;
+        _performanceDiagnostics = performanceDiagnostics;
         _defaultConnection = ReadDevelopmentFallback();
         RegisterCommands();
         AddTab();
@@ -58,8 +65,12 @@ public partial class MainWindow : Window
             async (_, _) =>
             {
                 UpdateShellState();
-                if (++_statusTicks % 5 == 0)
-                    await CheckActiveConnectionHealthAsync();
+                if (++_statusTicks % 5 == 0
+                    && Interlocked.Exchange(ref _healthCheckRunning, 1) == 0)
+                {
+                    try { await CheckActiveConnectionHealthAsync(); }
+                    finally { Volatile.Write(ref _healthCheckRunning, 0); }
+                }
             }, Dispatcher);
         _statusTimer.Start();
     }
@@ -147,7 +158,8 @@ public partial class MainWindow : Window
         doc.ConnectionProfileId = string.Empty;
         doc.CommandTimeout = TimeSpan.FromSeconds(_settings.CommandTimeoutSeconds);
         doc.CancellationTimeout = TimeSpan.FromSeconds(_settings.CancellationTimeoutSeconds);
-        var view = new QueryTabView(doc, _destructiveOperations, _settings, _backupRestore, _backupTools, _backupInspection);
+        var view = new QueryTabView(doc, _destructiveOperations, _settings, _backupRestore,
+            _backupTools, _backupInspection, _performanceDiagnostics);
         var tab = new TabItem { Content = view, Tag = doc };
         tab.Header = CreateTabHeader(tab, view);
         tab.ToolTip = view.SafeToolTip;
@@ -496,26 +508,46 @@ public partial class MainWindow : Window
 
     private async void Window_Closing(object? sender, CancelEventArgs e)
     {
-        _metadataCancellation?.Cancel();
         if (_shutdownApproved) return;
-        var openViews = QueryTabs.Items.OfType<TabItem>().Select(x => x.Content).OfType<QueryTabView>().ToArray();
-        if (openViews.All(view => !view.Document.IsDirty && !view.IsExecuting))
-        {
-            _shutdownApproved = true;
-            _statusTimer.Stop();
-            DisposeAfterCleanClose(openViews);
-            return;
-        }
         e.Cancel = true;
         if (_shutdownInProgress) return;
         _shutdownInProgress = true;
+        _statusTimer.Stop();
+        _metadataCancellation?.Cancel();
+        using var performance = new PerformanceOperation("ApplicationShutdown", _performanceDiagnostics);
         try
         {
-            foreach (var view in QueryTabs.Items.OfType<TabItem>().Select(x => x.Content).OfType<QueryTabView>().ToArray())
-                if (!await CloseDocumentAsync(view)) return;
-            await _objectExplorer.DisposeAsync();
-            await DisposeRecoverySessionsAsync();
-            _statusTimer.Stop();
+            var openViews = QueryTabs.Items.OfType<TabItem>()
+                .Select(item => item.Content).OfType<QueryTabView>().ToArray();
+            if (openViews.Any(view => view.Document.IsDirty || view.IsExecuting))
+            {
+                foreach (var view in openViews)
+                    if (!await CloseDocumentAsync(view))
+                    {
+                        _statusTimer.Start();
+                        return;
+                    }
+                openViews = Array.Empty<QueryTabView>();
+            }
+
+            var cleanup = CleanupShellResourcesAsync(openViews);
+            if (cleanup.IsCompletedSuccessfully)
+            {
+                _shutdownApproved = true;
+                e.Cancel = false;
+                return;
+            }
+            try
+            {
+                await cleanup.WaitAsync(PerformanceBudgets.InteractiveP95["Shutdown"]);
+            }
+            catch (TimeoutException)
+            {
+                performance.Fail("shutdown_timeout");
+                _ = ObserveLateCleanupAsync(cleanup);
+                System.Diagnostics.Trace.WriteLine(
+                    "Shell cleanup exceeded the five-second shutdown budget; remaining disposal continues in the background.");
+            }
             _shutdownApproved = true;
             Close();
         }
@@ -523,20 +555,27 @@ public partial class MainWindow : Window
         {
             MessageBox.Show(this, SecretRedactor.Redact(ex.Message), "Shutdown cleanup failed", MessageBoxButton.OK, MessageBoxImage.Error);
         }
-        finally { _shutdownInProgress = false; }
+        finally
+        {
+            _shutdownInProgress = false;
+            if (!_shutdownApproved && !_statusTimer.IsEnabled) _statusTimer.Start();
+        }
     }
 
-    private async void DisposeAfterCleanClose(IReadOnlyList<QueryTabView> views)
+    private async Task CleanupShellResourcesAsync(IReadOnlyList<QueryTabView> views)
     {
-        try
-        {
-            foreach (var view in views) await view.Document.DisposeAsync();
-            await _objectExplorer.DisposeAsync();
-            await DisposeRecoverySessionsAsync();
-        }
+        foreach (var view in views) await view.Document.DisposeAsync();
+        await _objectExplorer.DisposeAsync();
+        await DisposeRecoverySessionsAsync();
+    }
+
+    private static async Task ObserveLateCleanupAsync(Task cleanup)
+    {
+        try { await cleanup.ConfigureAwait(false); }
         catch (Exception ex)
         {
-            System.Diagnostics.Trace.WriteLine($"Shell cleanup failed: {SecretRedactor.Redact(ex.Message)}");
+            System.Diagnostics.Trace.WriteLine(
+                $"Late shell cleanup failed: {SecretRedactor.Redact(ex.Message)}");
         }
     }
 
@@ -570,8 +609,10 @@ public partial class MainWindow : Window
     private TreeViewItem ToTreeItem(ObjectExplorerNode node, IReadOnlySet<PostgresObjectIdentity>? expanded = null)
     {
         var item = new TreeViewItem { Header = node.Name, Tag = node };
-        Populate(item, node, expanded);
+        if (node.HasChildren)
+            item.Items.Add(new TreeViewItem { Header = "Expand to load…", IsEnabled = false });
         item.Expanded += TreeItem_Expanded;
+        item.Collapsed += TreeItem_Collapsed;
         if (expanded?.Contains(node.Identity) == true) item.IsExpanded = true;
         return item;
     }
@@ -586,11 +627,30 @@ public partial class MainWindow : Window
 
     private async void TreeItem_Expanded(object sender, RoutedEventArgs e)
     {
-        if (sender is not TreeViewItem { Tag: ObjectExplorerNode node } item || node.IsLoaded) return;
+        if (sender is not TreeViewItem { Tag: ObjectExplorerNode node } item) return;
         e.Handled = true;
-        try { await _objectExplorer.ExpandAsync(node, cancellationToken: _metadataCancellation?.Token ?? default); Populate(item, node); }
+        if (node.IsLoaded)
+        {
+            if (item.Items.Count == 1 && item.Items[0] is TreeViewItem { Tag: null })
+                Populate(item, node);
+            return;
+        }
+        try
+        {
+            await _objectExplorer.ExpandAsync(
+                node,
+                cancellationToken: _metadataCancellation?.Token ?? default);
+            if (item.IsExpanded) Populate(item, node);
+        }
         catch (OperationCanceledException) { }
         catch (Exception ex) { item.Items.Clear(); item.Items.Add(new TreeViewItem { Header = SecretRedactor.Redact(ex.Message), IsEnabled = false }); }
+    }
+
+    private static void TreeItem_Collapsed(object sender, RoutedEventArgs e)
+    {
+        if (sender is not TreeViewItem { Tag: ObjectExplorerNode node }) return;
+        node.Cancel();
+        e.Handled = true;
     }
 
     private static IEnumerable<PostgresObjectIdentity> ExpandedIdentities(ItemCollection items)

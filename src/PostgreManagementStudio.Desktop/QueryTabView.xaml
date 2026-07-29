@@ -59,6 +59,11 @@
             <Button Command="{x:Static local:ShellCommands.FindInResults}" ToolTip="Find in results" AutomationProperties.Name="Find in results"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE721;"/></Button>
             <Button Command="{x:Static local:ShellCommands.ClearResults}" ToolTip="Clear result sorting and search" AutomationProperties.Name="Clear result view"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE894;"/></Button>
             <Separator/>
+            <Button x:Name="PreviousResultPageButton" Content="Previous" Click="PreviousResultPage_Click"
+                    ToolTip="Show the previous bounded result page"/>
+            <Button x:Name="NextResultPageButton" Content="Next" Click="NextResultPage_Click"
+                    ToolTip="Show the next bounded result page"/>
+            <Separator/>
             <TextBlock x:Name="ResultSummary" VerticalAlignment="Center" Margin="4,0"/>
           </ToolBar>
           <Border x:Name="ResultSearchPanel" DockPanel.Dock="Top" Visibility="Collapsed" Background="#F7F7F7" Padding="5">

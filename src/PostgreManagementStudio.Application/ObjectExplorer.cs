@@ -91,7 +91,7 @@ public sealed class ObjectExplorerNode : IAsyncDisposable
             Error = null;
         }
         foreach (var node in removed)
-            node.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            node.DisposeTree();
     }
 
     internal void ApplyError(MetadataError? error)
@@ -124,12 +124,23 @@ public sealed class ObjectExplorerNode : IAsyncDisposable
         foreach (var child in children) child.ClearStale();
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
+    {
+        DisposeTree();
+        return ValueTask.CompletedTask;
+    }
+
+    internal void DisposeTree()
     {
         ObjectExplorerNode[] children;
-        lock (_gate) children = _children.ToArray();
-        await Request.DisposeAsync();
-        foreach (var child in children) await child.DisposeAsync();
+        lock (_gate)
+        {
+            children = _children.ToArray();
+            _children = Array.Empty<ObjectExplorerNode>();
+            _activeLoad = null;
+        }
+        _ = Request.DisposeAsync();
+        foreach (var child in children) child.DisposeTree();
     }
 
     internal static ObjectExplorerNodeKind MapKind(PostgresObjectClass value) => value switch
@@ -154,6 +165,7 @@ public sealed class ObjectExplorerService : IAsyncDisposable, IDisposable
     private ObjectExplorerNode? _root;
     private bool _isStale;
     private Guid _connectionGenerationId;
+    private long _databaseRoundTrips;
     private readonly SemaphoreSlim _refreshConcurrency = new(4, 4);
     private int _disposed;
 
@@ -166,6 +178,7 @@ public sealed class ObjectExplorerService : IAsyncDisposable, IDisposable
     public ObjectExplorerService(HardenedMetadataService metadata) => _metadata = metadata;
     public bool IsStale => _isStale;
     public ObjectExplorerNode? CurrentRoot => _root;
+    public long DatabaseRoundTrips => Interlocked.Read(ref _databaseRoundTrips);
 
     public async Task<ObjectExplorerNode> LoadRootAsync(
         string connectionString,
@@ -195,6 +208,7 @@ public sealed class ObjectExplorerService : IAsyncDisposable, IDisposable
         _context = context;
         var controller = _root?.Request ?? new MetadataRequestController();
         var result = await _metadata.LoadRootAsync(context, controller, refresh, cancellationToken).ConfigureAwait(false);
+        if (!result.CacheHit) Interlocked.Increment(ref _databaseRoundTrips);
         if (result.State == MetadataRequestState.Cancelled) throw new OperationCanceledException(cancellationToken);
         if (result.State == MetadataRequestState.Stale) throw new OperationCanceledException("A newer metadata request superseded this request.");
         if (result.Value is null) throw new MetadataLoadException(result.Error!);
@@ -250,6 +264,7 @@ public sealed class ObjectExplorerService : IAsyncDisposable, IDisposable
             var context = _context ?? throw new InvalidOperationException("Load the database root before expanding a node.");
             var result = await _metadata.LoadChildrenAsync(context, node.Identity, node.Request, refresh, cancellationToken)
                 .ConfigureAwait(false);
+            if (!result.CacheHit) Interlocked.Increment(ref _databaseRoundTrips);
             if (result.State is MetadataRequestState.Cancelled or MetadataRequestState.Stale) return node;
             if (result.Value is null)
             {
@@ -333,14 +348,15 @@ public sealed class ObjectExplorerService : IAsyncDisposable, IDisposable
         new(ObjectExplorerNode.MapKind(descriptor.Identity.ObjectClass), descriptor.DisplayName,
             descriptor.QualifiedName, descriptor.Identity, descriptor.HasChildren, !descriptor.HasChildren);
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-        if (_root is not null) await _root.DisposeAsync();
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return ValueTask.CompletedTask;
+        _root?.DisposeTree();
         _root = null;
         _context = null;
         _connectionGenerationId = Guid.Empty;
         _refreshConcurrency.Dispose();
+        return ValueTask.CompletedTask;
     }
 
     public void MarkStale()
@@ -351,7 +367,7 @@ public sealed class ObjectExplorerService : IAsyncDisposable, IDisposable
         _root?.MarkStale();
     }
 
-    public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
+    public void Dispose() => DisposeAsync();
 
     private static ObjectMetadataContext BuildContext(
         string connectionString,
