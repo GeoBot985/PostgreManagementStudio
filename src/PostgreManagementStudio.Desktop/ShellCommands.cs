@@ -15,9 +15,9 @@ public static class ShellCommands
     public static RoutedUICommand OpenFile { get; } = Create("Open File", nameof(OpenFile), new KeyGesture(Key.O, ModifierKeys.Control));
     public static RoutedUICommand Save { get; } = Create("Save", nameof(Save), new KeyGesture(Key.S, ModifierKeys.Control));
     public static RoutedUICommand SaveAs { get; } = Create("Save As", nameof(SaveAs), new KeyGesture(Key.S, ModifierKeys.Control | ModifierKeys.Shift));
-    public static RoutedUICommand CloseDocument { get; } = Create("Close Query", nameof(CloseDocument), new KeyGesture(Key.W, ModifierKeys.Control));
-    public static RoutedUICommand CloseOtherDocuments { get; } = Create("Close Other Queries", nameof(CloseOtherDocuments));
-    public static RoutedUICommand CloseAllDocuments { get; } = Create("Close All Queries", nameof(CloseAllDocuments), new KeyGesture(Key.W, ModifierKeys.Control | ModifierKeys.Shift));
+    public static RoutedUICommand CloseDocument { get; } = Create("Close Document", nameof(CloseDocument), new KeyGesture(Key.W, ModifierKeys.Control));
+    public static RoutedUICommand CloseOtherDocuments { get; } = Create("Close Other Documents", nameof(CloseOtherDocuments));
+    public static RoutedUICommand CloseAllDocuments { get; } = Create("Close All Documents", nameof(CloseAllDocuments), new KeyGesture(Key.W, ModifierKeys.Control | ModifierKeys.Shift));
     public static RoutedUICommand NextDocument { get; } = Create("Next Query", nameof(NextDocument), new KeyGesture(Key.Tab, ModifierKeys.Control));
     public static RoutedUICommand PreviousDocument { get; } = Create("Previous Query", nameof(PreviousDocument), new KeyGesture(Key.Tab, ModifierKeys.Control | ModifierKeys.Shift));
     public static RoutedUICommand Execute { get; } = Create("Execute", nameof(Execute), new KeyGesture(Key.F5), new KeyGesture(Key.Enter, ModifierKeys.Control));

@@ -451,6 +451,18 @@ public partial class MainWindow : Window
         UpdateShellState();
     }
 
+    private void ObjectExplorerTree_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        var item = e.OriginalSource as DependencyObject;
+        while (item is not null && item is not TreeViewItem)
+            item = VisualTreeHelper.GetParent(item);
+        if (item is TreeViewItem treeItem && treeItem.Tag is ObjectExplorerNode)
+        {
+            treeItem.IsSelected = true;
+            treeItem.Focus();
+        }
+    }
+
     private async Task RefreshObjectExplorerAsync()
     {
         var document = ActiveDocument;

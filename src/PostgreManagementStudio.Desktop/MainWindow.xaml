@@ -18,7 +18,7 @@
         <MenuItem Header="Save _As…" Command="{x:Static local:ShellCommands.SaveAs}" InputGestureText="Ctrl+Shift+S"/>
         <MenuItem Header="Recent Files" IsEnabled="False" ToolTip="Deferred until recovery persistence is validated."/>
         <Separator/>
-        <MenuItem Header="_Close Query" Command="{x:Static local:ShellCommands.CloseDocument}" InputGestureText="Ctrl+W"/>
+        <MenuItem Header="_Close Document" Command="{x:Static local:ShellCommands.CloseDocument}" InputGestureText="Ctrl+W"/>
         <Separator/>
         <MenuItem Header="E_xit" Click="Exit_Click"/>
       </MenuItem>
@@ -149,10 +149,9 @@
           <Border DockPanel.Dock="Top" Background="#F3F3F3" BorderBrush="#D0D0D0" BorderThickness="0,0,0,1" Padding="8,5">
             <TextBlock x:Name="ObjectExplorerHeader" Text="Object Explorer" FontWeight="SemiBold"/>
           </Border>
-          <TreeView x:Name="ObjectExplorerTree">
+      <TreeView x:Name="ObjectExplorerTree" ContextMenuOpening="ObjectExplorerTree_ContextMenuOpening">
             <TreeView.ContextMenu>
               <ContextMenu>
-                <MenuItem Header="New Query" Command="{x:Static local:ShellCommands.NewQuery}"/>
                 <MenuItem Header="Refresh" Command="{x:Static local:ShellCommands.RefreshObjectExplorer}"/>
                 <Separator/>
                 <MenuItem Header="Search…" Command="{x:Static local:ShellCommands.SearchObjects}"/>
@@ -172,7 +171,7 @@
       <TabControl x:Name="QueryTabs" Grid.Column="2" SelectionChanged="QueryTabs_SelectionChanged">
         <TabControl.ContextMenu>
           <ContextMenu>
-            <MenuItem Header="Close" Command="{x:Static local:ShellCommands.CloseDocument}"/>
+            <MenuItem Header="Close Document" Command="{x:Static local:ShellCommands.CloseDocument}"/>
             <MenuItem Header="Close Other Tabs" Command="{x:Static local:ShellCommands.CloseOtherDocuments}"/>
             <MenuItem Header="Close All Tabs" Command="{x:Static local:ShellCommands.CloseAllDocuments}"/>
             <Separator/>

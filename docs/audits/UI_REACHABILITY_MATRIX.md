@@ -36,6 +36,14 @@ does not count as user reachability without a usable desktop route.
 | Diagnostic snapshot export | `ActivityExportService`, activity snapshot and privacy contracts | Performance Dashboard > Diagnostic output > Save snapshot | Refresh dashboard > choose privacy option > Save snapshot as JSON or CSV | END_TO_END_REACHABLE | Latest activity, blocking and lock state can be saved with timestamps, explicit omitted sections, bounded query previews and no credentials/connection strings. | `MonitoringWorkspaceWindow.cs`, `ActivityMonitoring.cs`, Sprint 54 evidence and desktop tests | Snapshot is activity-scoped; query/database statistics are recorded as omitted when unavailable | KEEP_FOR_CURRENT_RELEASE | 55 support bundle scope |
 | SQL IntelliSense/completion | `SqlCompletionEngine`, completion contracts and latest-request coordinator | No visible completion popup or command | No reproducible user route | SERVICE_ONLY | Completion work is triggered internally on editor key events, but no completion list is composed into the editor surface. | `QueryTabView.xaml.cs`, `SqlCompletionEngine.cs`, completion tests | Missing visible suggestion UI, selection/keyboard handling, metadata context and empty/error states | DEFER_TO_LATER_RELEASE | 52 editor completion |
 
+## Sprint 55 composition correction
+
+The matrix now reflects the shell consistency pass: current workspace routes
+use canonical commands, the Object Explorer context route selects the item
+under the pointer, and document-close terminology is consistent. These changes
+improve discoverability and targeting but do not promote service-only settings,
+query history, query-performance, or database-performance capabilities.
+
 ## Counts
 
 | UI state | Count |

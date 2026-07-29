@@ -27,6 +27,24 @@ A completed feature must provide, as applicable:
 
 ## Classification gate
 
+## Sprint 55 shell policy
+
+The desktop shell is menu-bar-first. `ShellCommands` is the canonical command
+owner; menus, toolbars, keyboard gestures and context menus bind to the same
+routed command rather than duplicating feature handlers. A document is an SQL
+editor tab. A workspace is a modeless tool window and is either singleton per
+editor context or explicitly multi-instance; it must show its connection and
+database target. Modal dialogs are reserved for short input or confirmation
+steps, and wizards are reserved for staged transfer/review flows.
+
+Every workspace that starts asynchronous work owns a cancellation/lifetime
+token and stops refresh or detaches updates before disposal. Persisted state is
+limited to validated, non-sensitive preferences; active PIDs, executable plans,
+credentials, connection strings and destructive confirmations are never
+restored. Destructive commands identify and revalidate their target immediately
+before execution. Cross-workspace navigation preserves the originating server
+and database or reports that the target is unavailable.
+
 Use `NOT_IMPLEMENTED` when meaningful implementation is absent. Use
 `SERVICE_ONLY` when implementation exists below the desktop boundary. Use
 `DIAGNOSTIC_OR_TEMPORARY_UI` for one-shot/raw/developer/provisional surfaces.

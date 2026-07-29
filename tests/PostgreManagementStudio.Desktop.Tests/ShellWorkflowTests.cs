@@ -355,6 +355,20 @@ public sealed class ShellWorkflowTests
         });
     }
 
+    [Fact]
+    public void Sprint55_CanonicalShellShortcutsHaveNoCollisions()
+    {
+        var gestures = typeof(ShellCommands).GetProperties()
+            .SelectMany(property => (property.GetValue(null) as RoutedUICommand)?.InputGestures.OfType<KeyGesture>()
+                .Select(gesture => (Command: property.Name, gesture.Key, gesture.Modifiers)) ?? Enumerable.Empty<(string Command, Key Key, ModifierKeys Modifiers)>())
+            .GroupBy(x => (x.Key, x.Modifiers))
+            .Where(group => group.Count() > 1)
+            .Select(group => $"{group.Key.Key}+{group.Key.Modifiers}: {string.Join(", ", group.Select(x => x.Command))}")
+            .ToArray();
+
+        Assert.Empty(gestures);
+    }
+
     private static void RunSta(
         Action<MainWindow, ServiceProvider> test,
         Action<ServiceProvider>? arrange = null)

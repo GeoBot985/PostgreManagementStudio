@@ -42,6 +42,13 @@ the current repository has analysis models but no composed PostgreSQL adapters
 for those sources. The dashboard reports that limitation explicitly rather
 than displaying an empty or fabricated statistics view.
 
+Sprint 55 consolidates the shell around those composed workspaces. Object
+Explorer context menus now select the item under the pointer before opening,
+duplicate New Query launching was removed from that context menu, and document
+close commands use consistent terminology. The shell still does not claim a
+settings editor, query history browser, query-performance adapter, or
+database-performance workspace merely because supporting services exist.
+
 The current source-of-truth description is the reachability matrix plus the
 release-scope reset. Future sprint reports may retain historical status, but
 must use “service-only”, “temporary UI”, “partial”, “end-to-end reachable”, or

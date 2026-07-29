@@ -15,7 +15,7 @@ administration coverage that is not composed into the desktop.
 | Query plans | KEEP_FOR_CURRENT_RELEASE | END_TO_END_REACHABLE | Helps users understand query cost and access paths | Plan provider plus explorer workspace | large | Actual-plan side effects and plan comparison remain deferred | 7 |
 | Backup/restore | KEEP_FOR_CURRENT_RELEASE | END_TO_END_REACHABLE | Essential data-safety workflow | External tools, validators, destructive guard | large | Target/tool/version qualification and post-restore refresh | 8 |
 | Object search | KEEP_FOR_CURRENT_RELEASE | END_TO_END_REACHABLE | Fast navigation across database objects | Search service and shell workspace | medium | Object activation/history remain deferred | 9 |
-| Live activity/session monitor | DEFER_TO_LATER_RELEASE | SERVICE_ONLY | Operational visibility and safe session intervention | Activity/session services and routed actions | large | Requires refresh/filter/grid and stale-selection safeguards | 10 |
+| Live activity/session monitor | KEEP_FOR_CURRENT_RELEASE | END_TO_END_REACHABLE | Operational visibility and safe session intervention | Activity/session services and routed actions | large | Query/database statistics and richer filtering remain deferred | 10 |
 | Data-transfer wizard | COMPLETE_BEFORE_RELEASE | PARTIALLY_REACHABLE | Safe import/migration with review and progress | Transfer service, mapping and transaction policy | large | Partial import, constraints and rejected-row handling | 11 |
 | Settings/layout | DEFER_TO_LATER_RELEASE | SERVICE_ONLY/PARTIALLY_REACHABLE | User control over defaults and shell state | Settings store and shell persistence | medium | Persistence semantics not yet user-visible | 12 |
 | Transaction workspace | DEFER_TO_LATER_RELEASE | SERVICE_ONLY | Explicit transaction control for advanced users | Query executor and recovery policy | large | Misrepresenting commit/rollback state | 13 |
@@ -27,7 +27,7 @@ administration coverage that is not composed into the desktop.
 | Object scripting | REMOVE_FROM_UI_AND_CLAIMS | NOT_IMPLEMENTED | Useful only after a safe object-specific workflow exists | Requires new scripting composition | large | Claiming support without implementation | — |
 | SQL IntelliSense | DEFER_TO_LATER_RELEASE | SERVICE_ONLY | Faster and safer query authoring | Completion engine plus visible editor control | medium | Incorrect/stale metadata suggestions | 19 |
 | Query history | DEFER_TO_LATER_RELEASE | SERVICE_ONLY | Reuse prior work safely | Recent-files/history persistence | medium | Sensitive SQL retention and recovery semantics | 20 |
-| Diagnostics | KEEP_FOR_CURRENT_RELEASE | DIAGNOSTIC_OR_TEMPORARY_UI | Supportability and safe failure investigation | Redaction/diagnostic services | small | Must remain credential-safe and bounded | 21 |
+| Diagnostics | KEEP_FOR_CURRENT_RELEASE | END_TO_END_REACHABLE for activity snapshots; Help > Diagnostics remains temporary | Supportability and safe failure investigation | Redaction/diagnostic services | small | Full support bundle and query/database sections remain deferred | 21 |
 
 ## Current-release claims
 
@@ -35,7 +35,8 @@ The current release should advertise a compact SQL editor, PostgreSQL
 connection/session, Object Explorer browsing, query execution/cancellation,
 result viewing/export, basic file operations, recovery snapshots, restore
 review/execution, database object search, index inspection/reindex, and schema
-comparison with synchronisation preview/script review. It should not advertise
-a full administration suite, live monitoring, role management, automatic schema
-synchronisation, automatic index recommendations, query-performance dashboards,
-or visual plan analysis.
+comparison with synchronisation preview/script review, and server activity,
+blocking/lock diagnostics with privacy-aware activity snapshots. It should not
+advertise a full administration suite, query-performance/database-statistics
+dashboards, role management, automatic schema synchronisation, automatic index
+recommendations, or visual plan analysis.

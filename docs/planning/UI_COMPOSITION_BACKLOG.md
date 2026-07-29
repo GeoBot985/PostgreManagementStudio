@@ -84,7 +84,9 @@ finish one usable surface rather than expose another collection of buttons.
 
 ## Sprint 55/56 — Administration workspaces
 
-- Sprint 55: maintenance, security roles, index review/recommendations.
+- Sprint 55: shell consistency, command routing, context targeting and
+  workspace lifecycle policy completed; maintenance/security/index gaps remain
+  separately tracked.
 - Sprint 56: schema compare, synchronisation preview and script export.
 - Backend support: existing maintenance, security, index, schema extractor,
   planner and preview services.
@@ -92,6 +94,6 @@ finish one usable surface rather than expose another collection of buttons.
   review/confirmation, structured output and persistence.
 - Unknowns: product policy for destructive administration and supported scope.
 - Dependencies: activity/session identity and restore safety patterns.
-- Acceptance: every destructive step is explicit, reviewable, cancellable where
-  possible, and reconciled after completion; no service-only claim remains.
-- Risk: large.
+- Acceptance: Sprint 55 shell policy is complete; administration workflows that
+  remain service-only are not claimed as desktop-complete.
+- Risk: medium; the next administration workflow needs a deliberate scope.
