@@ -79,6 +79,7 @@ public static class ProductionServices
         services.AddTransient<NpgsqlMaintenanceService>();
         services.AddTransient<NpgsqlObjectSearchService>();
         services.AddTransient<NpgsqlSchemaModelExtractor>();
+        services.AddTransient<NpgsqlIndexAnalysisService>();
         services.AddTransient<NpgsqlSecurityService>();
         services.AddTransient<NpgsqlSessionManagementService>();
         services.AddTransient<MainWindow>();

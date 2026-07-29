@@ -38,19 +38,19 @@ finish one usable surface rather than expose another collection of buttons.
 
 ## Sprint 52 — Execution-plan explorer and SQL completion
 
-- Target workflows: bounded query history capture/reopen; live activity
-  refresh/filter/select; session cancellation/termination; visible SQL
-  completion list.
-- Backend support: query execution lifecycle/history models, activity/session
-  services, `SqlCompletionEngine` and latest-request coordination.
-- Composition required: privacy-aware history store/workspace, identity-safe
-  activity grid/actions, completion popup with keyboard semantics and metadata
-  context.
-- Unknowns: PostgreSQL version capability display and editor control choice.
-- Dependencies: query document targeting and structured result presentation.
-- Acceptance: plan warnings point to nodes; actual execution is confirmed;
-  completion never inserts stale results; all failure/cancel states recover.
-- Risk: large.
+- Completed workflows: index inventory/reindex and explicit two-source schema
+  comparison with synchronisation preview/script review.
+- Composition delivered: `IndexWorkspaceWindow` uses PostgreSQL catalogue and
+  statistics data with filtering, refresh, definition copy and target-aware
+  reindex; `SchemaComparisonWorkspaceWindow` validates distinct source/target
+  databases, compares asynchronously, displays structured differences and
+  generates a non-executing source-to-target preview script.
+- Deferred: index create/drop editor, dependency extraction, snapshot sources,
+  direct synchronisation execution, query history, activity monitoring and SQL
+  completion.
+- Acceptance: met for the delivered workflows; see
+  `docs/sprints/SPRINT_52_REPORT.md` and Sprint 52 evidence.
+- Risk: medium; cross-version/catalogue permissions and dependency scope remain.
 
 ## Sprint 53 — Data-transfer wizard and transaction state
 

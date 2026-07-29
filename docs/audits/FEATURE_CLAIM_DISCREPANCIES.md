@@ -17,6 +17,13 @@ product description. Historical reports are not rewritten.
 | Sprint 32/33 describe explorer/recommendation workspaces | `docs/sprints/032-execution-plan-explorer.md`, `docs/sprints/033-index-analysis-workspace.md` | No corresponding desktop workspace or command is registered | UI-independent implementation was reported alongside desktop-facing language | Plan explorer and index recommendation are not current desktop features |
 | Sprint 44 calls the result a “full-system” release baseline | `docs/release/sprint-44-qualification-report.md` | The baseline is a full-system test baseline for the implemented compact surface; many capabilities remain service-only or temporary | “Full-system” can be read as full product completeness | It is a regression baseline, not evidence that all advertised administration features are usable |
 
+## Sprint 52 correction
+
+Sprint 52 narrows the historical schema/index discrepancy: index inspection and
+reindex, schema comparison, and non-executing synchronisation preview are now
+end-to-end reachable. Automatic index recommendations, dependency-aware
+synchronisation execution, and full snapshot/object coverage remain deferred.
+
 ## Corrective rule
 
 The current source-of-truth description is the reachability matrix plus the

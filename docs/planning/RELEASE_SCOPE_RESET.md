@@ -22,8 +22,8 @@ administration coverage that is not composed into the desktop.
 | Security roles | DEFER_TO_LATER_RELEASE | DIAGNOSTIC_OR_TEMPORARY_UI | Administration of access and privileges | Security service and destructive guard | large | Permission mistakes and privilege escalation | 14 |
 | Maintenance | KEEP_FOR_CURRENT_RELEASE | END_TO_END_REACHABLE | Routine database care | Maintenance service, version detection and destructive guard | medium | Current target scope is the active database; lock duration remains workload-dependent | 10 |
 | Query performance dashboard/history | DEFER_TO_LATER_RELEASE | SERVICE_ONLY | Find regressions and expensive queries | Performance models and `pg_stat_statements` | large | Extension availability and interpretation | 16 |
-| Index analysis/recommendations | DEFER_TO_LATER_RELEASE | SERVICE_ONLY | Improve access paths safely | Index models, plan evidence and script preview | large | Unsafe or low-value recommendations | 17 |
-| Schema compare/synchronisation | DEFER_TO_LATER_RELEASE | SERVICE_ONLY | Review and migrate schema differences | Extractor, planner, preview | large | Cross-version/privilege/destructive changes | 18 |
+| Index analysis/recommendations | KEEP_FOR_CURRENT_RELEASE | END_TO_END_REACHABLE | Inspect and safely review access paths | Index metadata, analysis, maintenance and destructive guard | large | Create/drop/editor actions and object-level targeting remain deferred | 17 |
+| Schema compare/synchronisation | KEEP_FOR_CURRENT_RELEASE | END_TO_END_REACHABLE | Review and export schema differences safely | Extractor, comparison, planner and preview | large | Direct execution, dependency extraction and snapshot sources remain deferred | 18 |
 | Object scripting | REMOVE_FROM_UI_AND_CLAIMS | NOT_IMPLEMENTED | Useful only after a safe object-specific workflow exists | Requires new scripting composition | large | Claiming support without implementation | — |
 | SQL IntelliSense | DEFER_TO_LATER_RELEASE | SERVICE_ONLY | Faster and safer query authoring | Completion engine plus visible editor control | medium | Incorrect/stale metadata suggestions | 19 |
 | Query history | DEFER_TO_LATER_RELEASE | SERVICE_ONLY | Reuse prior work safely | Recent-files/history persistence | medium | Sensitive SQL retention and recovery semantics | 20 |
@@ -34,6 +34,8 @@ administration coverage that is not composed into the desktop.
 The current release should advertise a compact SQL editor, PostgreSQL
 connection/session, Object Explorer browsing, query execution/cancellation,
 result viewing/export, basic file operations, recovery snapshots, restore
-review/execution, and database object search. It should not advertise a full
-administration suite, live monitoring, role management, schema synchronisation,
-index recommendations, query-performance dashboards, or visual plan analysis.
+review/execution, database object search, index inspection/reindex, and schema
+comparison with synchronisation preview/script review. It should not advertise
+a full administration suite, live monitoring, role management, automatic schema
+synchronisation, automatic index recommendations, query-performance dashboards,
+or visual plan analysis.

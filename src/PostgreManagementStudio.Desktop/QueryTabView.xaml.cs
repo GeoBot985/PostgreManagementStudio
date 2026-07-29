@@ -33,10 +33,14 @@ public partial class QueryTabView : UserControl
     private readonly BackupInspectionService _backupInspection;
     private readonly NpgsqlObjectSearchService _objectSearch;
     private readonly PostgresVersionService _postgresVersion;
+    private readonly NpgsqlIndexAnalysisService _indexAnalysis;
+    private readonly NpgsqlSchemaModelExtractor _schemaExtractor;
     private RestoreWorkspaceWindow? _restoreWorkspace;
     private ObjectSearchWorkspaceWindow? _objectSearchWorkspace;
     private MaintenanceWorkspaceWindow? _maintenanceWorkspace;
     private PlanExplorerWindow? _planWorkspace;
+    private IndexWorkspaceWindow? _indexWorkspace;
+    private SchemaComparisonWorkspaceWindow? _schemaWorkspace;
     private readonly BackupRestoreOperationController _backupController = new();
     private readonly DocumentFileService _fileService = new(); private SqlDocument _file = new() { DisplayName = "Query" };
     private Guid _recoveryId = Guid.NewGuid();
@@ -45,6 +49,8 @@ public partial class QueryTabView : UserControl
         PostgreSqlToolDiscoveryService backupTools, BackupInspectionService backupInspection,
         NpgsqlObjectSearchService objectSearch,
         PostgresVersionService postgresVersion,
+        NpgsqlIndexAnalysisService indexAnalysis,
+        NpgsqlSchemaModelExtractor schemaExtractor,
         IPerformanceDiagnostics performanceDiagnostics)
     {
         InitializeComponent();
@@ -56,6 +62,8 @@ public partial class QueryTabView : UserControl
         _backupInspection = backupInspection;
         _objectSearch = objectSearch;
         _postgresVersion = postgresVersion;
+        _indexAnalysis = indexAnalysis;
+        _schemaExtractor = schemaExtractor;
         _performanceDiagnostics = performanceDiagnostics;
         _document.ExecutionStateChanged += Document_ExecutionStateChanged;
         Unloaded += QueryTabView_Unloaded;
@@ -73,6 +81,8 @@ public partial class QueryTabView : UserControl
         _objectSearchWorkspace?.Close();
         _maintenanceWorkspace?.Close();
         _planWorkspace?.Close();
+        _indexWorkspace?.Close();
+        _schemaWorkspace?.Close();
         _document.ExecutionStateChanged -= Document_ExecutionStateChanged;
         if (_connection is not null) _connection.Session.StateChanged -= RecoverySession_StateChanged;
         try
@@ -141,6 +151,8 @@ public partial class QueryTabView : UserControl
         _objectSearchWorkspace?.Close();
         _maintenanceWorkspace?.Close();
         _planWorkspace?.Close();
+        _indexWorkspace?.Close();
+        _schemaWorkspace?.Close();
         if (_connection is not null) _connection.Session.StateChanged -= RecoverySession_StateChanged;
         _connection = connection;
         if (_connection is not null) _document.Database = _connection.Database;
@@ -739,6 +751,22 @@ public partial class QueryTabView : UserControl
         _maintenanceWorkspace = new MaintenanceWorkspaceWindow(new NpgsqlMaintenanceService(), _postgresVersion, _destructiveOperations,
             CurrentConnectionString(), connection, Connection?.Configuration.Profile.EnvironmentDisplayName ?? "Unknown") { Owner = Window.GetWindow(this) };
         _maintenanceWorkspace.Closed += (_, _) => _maintenanceWorkspace = null; _maintenanceWorkspace.Show(); return Task.CompletedTask;
+    }
+    public Task OpenIndexWorkspaceAsync()
+    {
+        if (!IsRecoveryConnected) { MessagesText.Text = "Reconnect before opening index management."; OutputTabs.SelectedIndex = 1; return Task.CompletedTask; }
+        if (_indexWorkspace is { IsVisible: true }) { _indexWorkspace.Activate(); return Task.CompletedTask; }
+        var connection = DatabaseConnection.FromConnectionString(CurrentConnectionString()) with { Database = DatabaseText.Text };
+        _indexWorkspace = new IndexWorkspaceWindow(_indexAnalysis, new NpgsqlMaintenanceService(), _destructiveOperations, _postgresVersion, CurrentConnectionString(), $"{connection.Host}:{connection.Port}", connection.Database) { Owner = Window.GetWindow(this) };
+        _indexWorkspace.Closed += (_, _) => _indexWorkspace = null; _indexWorkspace.Show(); return Task.CompletedTask;
+    }
+    public Task OpenSchemaComparisonWorkspaceAsync()
+    {
+        if (!IsRecoveryConnected) { MessagesText.Text = "Reconnect before opening schema comparison."; OutputTabs.SelectedIndex = 1; return Task.CompletedTask; }
+        if (_schemaWorkspace is { IsVisible: true }) { _schemaWorkspace.Activate(); return Task.CompletedTask; }
+        var connection = DatabaseConnection.FromConnectionString(CurrentConnectionString()) with { Database = DatabaseText.Text };
+        _schemaWorkspace = new SchemaComparisonWorkspaceWindow(_schemaExtractor, CurrentConnectionString(), connection) { Owner = Window.GetWindow(this) };
+        _schemaWorkspace.Closed += (_, _) => _schemaWorkspace = null; _schemaWorkspace.Show(); return Task.CompletedTask;
     }
     private void OpenPlanWorkspace(ExecutionPlanDocument plan)
     {

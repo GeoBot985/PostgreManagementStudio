@@ -35,6 +35,8 @@ public static class ShellCommands
     public static RoutedUICommand FindInResults { get; } = Create("Find in Results", nameof(FindInResults));
     public static RoutedUICommand ClearResults { get; } = Create("Clear Result View", nameof(ClearResults));
     public static RoutedUICommand SearchObjects { get; } = Create("Search Objects", nameof(SearchObjects), new KeyGesture(Key.F, ModifierKeys.Control | ModifierKeys.Shift));
+    public static RoutedUICommand IndexManagement { get; } = Create("Index Management", nameof(IndexManagement), new KeyGesture(Key.I, ModifierKeys.Control | ModifierKeys.Shift));
+    public static RoutedUICommand SchemaCompare { get; } = Create("Compare Schemas", nameof(SchemaCompare), new KeyGesture(Key.C, ModifierKeys.Control | ModifierKeys.Shift));
     public static RoutedUICommand ImportData { get; } = Create("Import Data", nameof(ImportData));
     public static RoutedUICommand Backup { get; } = Create("Backup Database", nameof(Backup));
     public static RoutedUICommand Restore { get; } = Create("Restore Database", nameof(Restore));

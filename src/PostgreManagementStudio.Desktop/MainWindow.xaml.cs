@@ -22,6 +22,8 @@ public partial class MainWindow : Window
     private readonly BackupInspectionService _backupInspection;
     private readonly NpgsqlObjectSearchService _objectSearch;
     private readonly PostgresVersionService _postgresVersion;
+    private readonly NpgsqlIndexAnalysisService _indexAnalysis;
+    private readonly NpgsqlSchemaModelExtractor _schemaExtractor;
     private readonly IConnectionProbe _connectionProbe;
     private readonly IConnectionRecoveryDiagnostics _connectionDiagnostics;
     private readonly IPerformanceDiagnostics _performanceDiagnostics;
@@ -50,6 +52,8 @@ public partial class MainWindow : Window
         BackupInspectionService backupInspection,
         NpgsqlObjectSearchService objectSearch,
         PostgresVersionService postgresVersion,
+        NpgsqlIndexAnalysisService indexAnalysis,
+        NpgsqlSchemaModelExtractor schemaExtractor,
         IConnectionProbe connectionProbe,
         IConnectionRecoveryDiagnostics connectionDiagnostics,
         IPerformanceDiagnostics performanceDiagnostics,
@@ -70,6 +74,8 @@ public partial class MainWindow : Window
         _backupInspection = backupInspection;
         _objectSearch = objectSearch;
         _postgresVersion = postgresVersion;
+        _indexAnalysis = indexAnalysis;
+        _schemaExtractor = schemaExtractor;
         _connectionProbe = connectionProbe;
         _connectionDiagnostics = connectionDiagnostics;
         _performanceDiagnostics = performanceDiagnostics;
@@ -133,6 +139,8 @@ public partial class MainWindow : Window
         Bind(ShellCommands.FindInResults, _ => ActiveView!.ShowResultSearch(), _ => State.CanExecute(ShellCommandId.ResultAction));
         Bind(ShellCommands.ClearResults, _ => ActiveView!.ClearResultView(), _ => State.CanExecute(ShellCommandId.ResultAction));
         BindAsync(ShellCommands.SearchObjects, () => ActiveView!.OpenSearchWorkspaceAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
+        BindAsync(ShellCommands.IndexManagement, () => ActiveView!.OpenIndexWorkspaceAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
+        BindAsync(ShellCommands.SchemaCompare, () => ActiveView!.OpenSchemaComparisonWorkspaceAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
         BindAsync(ShellCommands.ImportData, () => ActiveView!.ImportDataAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
         BindAsync(ShellCommands.Backup, () => ActiveView!.BackupDatabaseAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
         BindAsync(ShellCommands.Restore, () => ActiveView!.OpenRestoreWorkspaceAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
@@ -192,7 +200,7 @@ public partial class MainWindow : Window
         doc.CommandTimeout = TimeSpan.FromSeconds(_settings.CommandTimeoutSeconds);
         doc.CancellationTimeout = TimeSpan.FromSeconds(_settings.CancellationTimeoutSeconds);
         var view = new QueryTabView(doc, _destructiveOperations, _settings, _backupRestore,
-            _backupTools, _backupInspection, _objectSearch, _postgresVersion, _performanceDiagnostics);
+            _backupTools, _backupInspection, _objectSearch, _postgresVersion, _indexAnalysis, _schemaExtractor, _performanceDiagnostics);
         if (recoverySnapshot is not null)
             view.RestoreRecoverySnapshot(recoverySnapshot);
         var tab = new TabItem { Content = view, Tag = doc };

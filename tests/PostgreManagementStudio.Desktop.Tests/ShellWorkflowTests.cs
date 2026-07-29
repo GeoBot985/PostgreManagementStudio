@@ -200,10 +200,10 @@ public sealed class ShellWorkflowTests
     }
 
     [Fact]
-    public void SchemaCompare_IsAbsentFromTheReleaseCommandSurface()
+    public void SchemaCompare_IsNowReachableThroughTheReleaseCommandSurface()
     {
-        Assert.DoesNotContain(typeof(ShellCommands).GetProperties(), property =>
-            property.Name.Contains("Schema", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(typeof(ShellCommands).GetProperties(), property =>
+            property.Name == nameof(ShellCommands.SchemaCompare));
     }
 
     [Fact]
@@ -241,6 +241,37 @@ public sealed class ShellWorkflowTests
             Assert.Equal("Search database objects", search.Title);
             restore.Close();
             search.Close();
+        });
+    }
+
+    [Fact]
+    public void Sprint52_CommandSurfaceUsesSharedIndexAndSchemaRoutes()
+    {
+        Assert.Contains(ShellCommands.IndexManagement.InputGestures.Cast<InputGesture>(), gesture =>
+            gesture is KeyGesture { Key: Key.I, Modifiers: ModifierKeys.Control | ModifierKeys.Shift });
+        Assert.Contains(ShellCommands.SchemaCompare.InputGestures.Cast<InputGesture>(), gesture =>
+            gesture is KeyGesture { Key: Key.C, Modifiers: ModifierKeys.Control | ModifierKeys.Shift });
+    }
+
+    [Fact]
+    [Trait("Category", "UiIntegration")]
+    public void Sprint52_WorkspacesExposeExplicitTargetsAndSafePreviewControls()
+    {
+        RunSta((window, provider) =>
+        {
+            var target = new DatabaseConnection("localhost", 5432, "postgres", "postgres");
+            var indexes = new IndexWorkspaceWindow(provider.GetRequiredService<NpgsqlIndexAnalysisService>(), new NpgsqlMaintenanceService(),
+                provider.GetRequiredService<DestructiveOperationGuard>(), provider.GetRequiredService<PostgresVersionService>(),
+                "Host=localhost;Database=postgres;Username=postgres", "localhost:5432", "postgres");
+            var compare = new SchemaComparisonWorkspaceWindow(provider.GetRequiredService<NpgsqlSchemaModelExtractor>(),
+                "Host=localhost;Database=postgres;Username=postgres", target);
+            Assert.Equal("Index management", indexes.Title);
+            Assert.Contains(LogicalDescendants(indexes).OfType<DataGrid>(), grid => grid.Columns.Count >= 6);
+            Assert.Equal("Schema comparison and synchronisation preview", compare.Title);
+            Assert.Contains(LogicalDescendants(compare).OfType<PasswordBox>(), _ => true);
+            Assert.Contains(LogicalDescendants(compare).OfType<DataGrid>(), grid => grid.Columns.Count >= 6);
+            indexes.Close();
+            compare.Close();
         });
     }
 

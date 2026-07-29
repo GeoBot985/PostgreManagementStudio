@@ -68,6 +68,8 @@
       </MenuItem>
       <MenuItem Header="_Tools">
         <MenuItem Header="_Search Objects…" Command="{x:Static local:ShellCommands.SearchObjects}" InputGestureText="Ctrl+Shift+F"/>
+        <MenuItem Header="_Index Management…" Command="{x:Static local:ShellCommands.IndexManagement}" InputGestureText="Ctrl+Shift+I"/>
+        <MenuItem Header="_Compare Schemas…" Command="{x:Static local:ShellCommands.SchemaCompare}" InputGestureText="Ctrl+Shift+C"/>
         <Separator/>
         <MenuItem Header="Options" IsEnabled="False" ToolTip="No validated options workflow is available yet."/>
       </MenuItem>
@@ -152,6 +154,8 @@
                 <MenuItem Header="Refresh" Command="{x:Static local:ShellCommands.RefreshObjectExplorer}"/>
                 <Separator/>
                 <MenuItem Header="Search…" Command="{x:Static local:ShellCommands.SearchObjects}"/>
+                <MenuItem Header="Index Management…" Command="{x:Static local:ShellCommands.IndexManagement}"/>
+                <MenuItem Header="Compare Schemas…" Command="{x:Static local:ShellCommands.SchemaCompare}"/>
                 <MenuItem Header="Backup…" Command="{x:Static local:ShellCommands.Backup}"/>
                 <MenuItem Header="Restore…" Command="{x:Static local:ShellCommands.Restore}"/>
                 <MenuItem Header="Maintenance…" Command="{x:Static local:ShellCommands.Maintenance}"/>
