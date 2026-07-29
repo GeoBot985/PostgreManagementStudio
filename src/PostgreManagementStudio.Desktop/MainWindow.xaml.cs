@@ -138,9 +138,12 @@ public partial class MainWindow : Window
         Bind(ShellCommands.ShowMessages, _ => ActiveView!.ShowOutput(1), _ => ActiveView is not null);
         Bind(ShellCommands.ShowExecutionPlan, _ => ActiveView!.ShowOutput(2), _ => ActiveView is not null);
         Bind(ShellCommands.About, _ => MessageBox.Show(this,
-            "PostgreManagementStudio\n\nA PostgreSQL management desktop for Windows.",
+            $"PostgreManagementStudio {AssemblyVersionText()}\n\nA PostgreSQL management desktop for Windows.",
             "About PostgreManagementStudio", MessageBoxButton.OK, MessageBoxImage.Information), _ => true);
     }
+
+    private static string AssemblyVersionText() =>
+        System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "0.0.0";
 
     private ShellCommandState State => new(
         ActiveView is not null,

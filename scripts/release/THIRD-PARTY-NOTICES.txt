@@ -1,0 +1,7 @@
+PostgreManagementStudio third-party notices
+
+The release uses Npgsql 8.0.6 and Microsoft.Extensions.DependencyInjection
+9.0.0 directly, together with their transitive dependencies restored from the
+approved NuGet source. The release build emits the resolved package inventory
+in package-inventory.json. Final public distribution requires the project
+owner to review the applicable package licences and include their notices.

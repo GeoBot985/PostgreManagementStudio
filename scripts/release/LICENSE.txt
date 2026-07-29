@@ -1,0 +1,6 @@
+PostgreManagementStudio release candidate
+
+This repository's application source is distributed under the terms selected
+by the project owner. This file is a packaging placeholder until the project
+owner publishes the final application licence. The release process must not
+ship a public package until that licence decision is complete.

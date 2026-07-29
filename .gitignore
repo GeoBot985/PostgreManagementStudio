@@ -15,6 +15,7 @@
 # Test and coverage output
 TestResults/
 coverage/
+artifacts/
 *.coverage
 *.coveragexml
 
@@ -30,4 +31,3 @@ appsettings.*.Local.json
 # OS files
 .DS_Store
 Thumbs.db
-

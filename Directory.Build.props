@@ -1,5 +1,14 @@
 <Project>
   <PropertyGroup>
+    <VersionPrefix>0.9.0</VersionPrefix>
+    <VersionSuffix>rc.1</VersionSuffix>
+    <Version Condition="'$(VersionSuffix)' != ''">$(VersionPrefix)-$(VersionSuffix)</Version>
+    <AssemblyVersion>$(VersionPrefix).0</AssemblyVersion>
+    <FileVersion>$(VersionPrefix).0</FileVersion>
+    <InformationalVersion>$(Version)</InformationalVersion>
+    <Company>PostgreManagementStudio</Company>
+    <Product>PostgreManagementStudio</Product>
+    <Authors>PostgreManagementStudio</Authors>
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <ImplicitUsings>enable</ImplicitUsings>
