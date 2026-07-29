@@ -355,4 +355,58 @@ public sealed class QueryExecutionIntegrationTests
         }
     }
 
+    [SeededPostgreSqlFact]
+    [Trait("Category", "EndToEnd")]
+    [Trait("Priority", "P0")]
+    public async Task DifferentRoleEditors_KeepTargetsResultsAndCancellationIsolated()
+    {
+        var readOnlyConnection = Environment.GetEnvironmentVariable(
+            "PMS_TEST_READONLY_CONNECTION_STRING")!;
+        var appUser = new Npgsql.NpgsqlConnectionStringBuilder(ConnectionString).Username;
+        var readOnlyUser = new Npgsql.NpgsqlConnectionStringBuilder(readOnlyConnection).Username;
+        var execution = new ResultExecutionService(new NpgsqlQueryExecutor());
+        await using var slowAppEditor = new QueryDocument(execution, "application editor")
+        {
+            ConnectionString = ConnectionString,
+            ConnectionProfileId = "application-role",
+            Database = Environment.GetEnvironmentVariable("PMS_TEST_DATABASE")!,
+            SqlText = "SELECT pg_sleep(10), current_user",
+            CancellationTimeout = TimeSpan.FromSeconds(5),
+        };
+        await using var readOnlyEditor = new QueryDocument(execution, "read-only editor")
+        {
+            ConnectionString = readOnlyConnection,
+            ConnectionProfileId = "read-only-role",
+            Database = Environment.GetEnvironmentVariable("PMS_TEST_DATABASE")!,
+            SqlText = "SELECT current_user, current_database()",
+        };
+
+        var slowExecution = slowAppEditor.ExecuteAsync();
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (!slowAppEditor.IsExecuting && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        Assert.True(slowAppEditor.IsExecuting);
+
+        var readOnlyResult = await readOnlyEditor.ExecuteAsync();
+        Assert.NotNull(readOnlyResult);
+        var readOnlyRow = await readOnlyResult!.ResultSets[0].GetRowAsync(
+            0,
+            CancellationToken.None);
+        Assert.Equal(readOnlyUser, readOnlyRow.Cells[0].Value);
+        Assert.Equal(
+            Environment.GetEnvironmentVariable("PMS_TEST_DATABASE"),
+            readOnlyRow.Cells[1].Value);
+
+        Assert.True(await slowAppEditor.CancelAsync());
+        var cancelledResult = await slowExecution;
+        Assert.Equal(QueryDocumentExecutionState.Cancelled, slowAppEditor.State);
+        Assert.Equal(QueryDocumentExecutionState.Completed, readOnlyEditor.State);
+        Assert.Equal("application-role", slowAppEditor.LastExecutionContext!.ConnectionProfileId);
+        Assert.Equal("read-only-role", readOnlyEditor.LastExecutionContext!.ConnectionProfileId);
+        Assert.Equal(appUser, slowAppEditor.LastExecutionContext.Username);
+        Assert.Equal(readOnlyUser, readOnlyEditor.LastExecutionContext.Username);
+        Assert.True(cancelledResult is null
+            || cancelledResult.Status == ResultSessionStatus.Cancelled);
+    }
+
 }

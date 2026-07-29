@@ -60,14 +60,15 @@
         <MenuItem Header="Change _Database" IsEnabled="False" ToolTip="Use the database selector on the query toolbar."/>
         <MenuItem Header="_Transaction Options" IsEnabled="False" ToolTip="Deferred from the release surface until the workflow is complete."/>
       </MenuItem>
-      <MenuItem Header="_Tools">
-        <MenuItem Header="_Search Objects…" Command="{x:Static local:ShellCommands.SearchObjects}"/>
+      <MenuItem Header="_Database">
         <MenuItem Header="_Import Data…" Command="{x:Static local:ShellCommands.ImportData}"/>
-        <Separator/>
         <MenuItem Header="_Backup…" Command="{x:Static local:ShellCommands.Backup}"/>
         <MenuItem Header="_Restore…" Command="{x:Static local:ShellCommands.Restore}"/>
         <MenuItem Header="_Maintenance…" Command="{x:Static local:ShellCommands.Maintenance}"/>
         <MenuItem Header="_Security Roles…" Command="{x:Static local:ShellCommands.Security}"/>
+      </MenuItem>
+      <MenuItem Header="_Tools">
+        <MenuItem Header="_Search Objects…" Command="{x:Static local:ShellCommands.SearchObjects}"/>
         <Separator/>
         <MenuItem Header="Options" IsEnabled="False" ToolTip="No validated options workflow is available yet."/>
       </MenuItem>

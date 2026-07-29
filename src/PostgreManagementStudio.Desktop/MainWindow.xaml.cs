@@ -25,14 +25,18 @@ public partial class MainWindow : Window
     private readonly IPerformanceDiagnostics _performanceDiagnostics;
     private readonly IConnectionProfileStore _connectionProfiles;
     private readonly CredentialLifecycleService _credentials;
+    private readonly RecoverySnapshotService _recoverySnapshots;
     private readonly HashSet<ConnectionRecoverySession> _recoverySessions = [];
+    private readonly HashSet<QueryTabView> _pendingRecoverySnapshots = [];
     private readonly DispatcherTimer _statusTimer;
+    private readonly DispatcherTimer _recoveryTimer;
     private CancellationTokenSource? _metadataCancellation;
     private ShellConnectionInfo? _defaultConnection;
     private bool _shutdownInProgress;
     private bool _shutdownApproved;
     private int _statusTicks;
     private int _healthCheckRunning;
+    private ObjectExplorerContext? _objectExplorerContext;
 
     public MainWindow(
         QueryTabManager tabs,
@@ -46,7 +50,8 @@ public partial class MainWindow : Window
         IConnectionRecoveryDiagnostics connectionDiagnostics,
         IPerformanceDiagnostics performanceDiagnostics,
         IConnectionProfileStore connectionProfiles,
-        CredentialLifecycleService credentials)
+        CredentialLifecycleService credentials,
+        RecoverySnapshotService recoverySnapshots)
     {
         using var performance = new PerformanceOperation(
             "MainWindowConstruction",
@@ -64,6 +69,7 @@ public partial class MainWindow : Window
         _performanceDiagnostics = performanceDiagnostics;
         _connectionProfiles = connectionProfiles;
         _credentials = credentials;
+        _recoverySnapshots = recoverySnapshots;
         _defaultConnection = ReadDevelopmentFallback();
         RegisterCommands();
         AddTab();
@@ -79,6 +85,11 @@ public partial class MainWindow : Window
                 }
             }, Dispatcher);
         _statusTimer.Start();
+        _recoveryTimer = new DispatcherTimer(
+            TimeSpan.FromSeconds(1),
+            DispatcherPriority.Background,
+            RecoveryTimer_Tick,
+            Dispatcher);
     }
 
     private QueryTabView? ActiveView => (QueryTabs.SelectedItem as TabItem)?.Content as QueryTabView;
@@ -157,15 +168,18 @@ public partial class MainWindow : Window
             },
             (_, e) => { e.CanExecute = canExecute(e); e.Handled = true; }));
 
-    private void AddTab()
+    private void AddTab(RecoverySnapshot? recoverySnapshot = null)
     {
-        var connection = _defaultConnection;
-        var doc = _tabs.Open(null, connection?.Database ?? _settings.DefaultDatabase);
+        var connection = recoverySnapshot is null ? _defaultConnection : null;
+        var database = recoverySnapshot?.Database ?? connection?.Database ?? _settings.DefaultDatabase;
+        var doc = _tabs.Open(null, database);
         doc.ConnectionProfileId = string.Empty;
         doc.CommandTimeout = TimeSpan.FromSeconds(_settings.CommandTimeoutSeconds);
         doc.CancellationTimeout = TimeSpan.FromSeconds(_settings.CancellationTimeoutSeconds);
         var view = new QueryTabView(doc, _destructiveOperations, _settings, _backupRestore,
             _backupTools, _backupInspection, _performanceDiagnostics);
+        if (recoverySnapshot is not null)
+            view.RestoreRecoverySnapshot(recoverySnapshot);
         var tab = new TabItem { Content = view, Tag = doc };
         tab.Header = CreateTabHeader(tab, view);
         tab.ToolTip = view.SafeToolTip;
@@ -202,9 +216,48 @@ public partial class MainWindow : Window
 
     private void View_StateChanged(object? sender, EventArgs e)
     {
-        if (sender is QueryTabView view && FindTab(view) is { } tab) UpdateTab(tab, view);
+        if (sender is QueryTabView view)
+        {
+            if (FindTab(view) is { } tab) UpdateTab(tab, view);
+            ScheduleRecoverySnapshot(view);
+        }
         UpdateShellState();
         CommandManager.InvalidateRequerySuggested();
+    }
+
+    private void ScheduleRecoverySnapshot(QueryTabView view)
+    {
+        if (!view.Document.IsDirty)
+        {
+            _pendingRecoverySnapshots.Remove(view);
+            _recoverySnapshots.Remove(view.RecoveryId);
+            return;
+        }
+
+        _pendingRecoverySnapshots.Add(view);
+        _recoveryTimer.Stop();
+        _recoveryTimer.Start();
+    }
+
+    private async void RecoveryTimer_Tick(object? sender, EventArgs e)
+    {
+        _recoveryTimer.Stop();
+        var pending = _pendingRecoverySnapshots.ToArray();
+        _pendingRecoverySnapshots.Clear();
+        foreach (var view in pending)
+        {
+            if (!view.Document.IsDirty || FindTab(view) is null)
+                continue;
+            try
+            {
+                await _recoverySnapshots.WriteAsync(view.CreateRecoverySnapshot());
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.WriteLine(
+                    $"workspace_recovery_write_failed type={ex.GetType().FullName} message={SecretRedactor.Redact(ex.Message)}");
+            }
+        }
     }
 
     private static void UpdateTab(TabItem tab, QueryTabView view)
@@ -246,6 +299,8 @@ public partial class MainWindow : Window
 
         view.DirtyChanged -= View_StateChanged;
         view.WorkspaceStateChanged -= View_StateChanged;
+        _pendingRecoverySnapshots.Remove(view);
+        _recoverySnapshots.Remove(view.RecoveryId);
         await document.DisposeAsync();
         _tabs.TryClose(document, discardChanges: true);
         if (FindTab(view) is { } tab) QueryTabs.Items.Remove(tab);
@@ -313,17 +368,36 @@ public partial class MainWindow : Window
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
+        if (await RestoreWorkspaceAsync()) return;
         if (_defaultConnection is null) return;
         TrackConnection(_defaultConnection);
         await _defaultConnection.Session.ConnectAsync(_defaultConnection.Configuration);
     }
 
-    private void QueryTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private async Task<bool> RestoreWorkspaceAsync()
+    {
+        var snapshots = await _recoverySnapshots.ReadAllAsync();
+        if (snapshots.Count == 0)
+            return false;
+
+        var initial = ActiveView;
+        if (initial is not null)
+            await CloseDocumentAsync(initial);
+        foreach (var snapshot in snapshots)
+            AddTab(snapshot);
+        QueryStatusText.Text =
+            $"Recovered {snapshots.Count:N0} unsaved quer{(snapshots.Count == 1 ? "y" : "ies")}; reconnect explicitly before execution.";
+        return true;
+    }
+
+    private async void QueryTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (QueryTabs.SelectedItem is TabItem { Tag: QueryDocument doc }) _tabs.Activate(doc);
         ActualPlanButton.IsChecked = ActiveView?.IncludeActualPlan == true;
         UpdateShellState();
         CommandManager.InvalidateRequerySuggested();
+        if (CurrentObjectExplorerContext() != _objectExplorerContext)
+            await RefreshObjectExplorerAsync();
     }
 
     private void DatabaseSelector_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
@@ -343,6 +417,9 @@ public partial class MainWindow : Window
             MarkObjectExplorerStale("Object Explorer is stale. Reconnect to refresh PostgreSQL objects.");
             return;
         }
+        var requestedContext = CurrentObjectExplorerContext();
+        if (requestedContext is null)
+            return;
         try
         {
             _metadataCancellation?.Cancel();
@@ -353,11 +430,14 @@ public partial class MainWindow : Window
             var root = await _objectExplorer.LoadRootAsync(document.ConnectionString, document.Database, refresh: true,
                 connectionGenerationId: recovery.Snapshot.GenerationId,
                 cancellationToken: _metadataCancellation.Token);
+            if (CurrentObjectExplorerContext() != requestedContext)
+                return;
             ObjectExplorerTree.ItemsSource = null;
             ObjectExplorerTree.Items.Clear();
             ObjectExplorerTree.Items.Add(ToTreeItem(root, expanded));
             ObjectExplorerTree.ToolTip = null;
             ObjectExplorerHeader.Text = "Object Explorer";
+            _objectExplorerContext = requestedContext;
             foreach (var identity in selectionPath)
                 if (FindItem(ObjectExplorerTree.Items, identity) is { } selected)
                 {
@@ -424,6 +504,7 @@ public partial class MainWindow : Window
     {
         _metadataCancellation?.Cancel();
         _objectExplorer.MarkStale();
+        _objectExplorerContext = null;
         ObjectExplorerHeader.Text = "Object Explorer (stale — reconnect required)";
         ObjectExplorerTree.ToolTip = SecretRedactor.Redact(message);
         if (ObjectExplorerTree.Items.Count == 0)
@@ -489,6 +570,16 @@ public partial class MainWindow : Window
         CaretStatusText.Text = $"Ln {caret.Line}, Col {caret.Column}  INS";
     }
 
+    private ObjectExplorerContext? CurrentObjectExplorerContext()
+    {
+        var view = ActiveView;
+        var session = view?.Connection?.Session;
+        var snapshot = session?.Snapshot;
+        return view is null || session is null || snapshot?.State != RecoveryConnectionState.Connected
+            ? null
+            : new(session.LogicalSessionId, snapshot.GenerationId, view.Document.Database);
+    }
+
     private ShellConnectionInfo? ReadDevelopmentFallback()
     {
         var value = Environment.GetEnvironmentVariable("PMS_CONNECTION_STRING");
@@ -524,6 +615,7 @@ public partial class MainWindow : Window
         if (_shutdownInProgress) return;
         _shutdownInProgress = true;
         _statusTimer.Stop();
+        _recoveryTimer.Stop();
         _metadataCancellation?.Cancel();
         using var performance = new PerformanceOperation("ApplicationShutdown", _performanceDiagnostics);
         try
@@ -536,6 +628,8 @@ public partial class MainWindow : Window
                     if (!await CloseDocumentAsync(view))
                     {
                         _statusTimer.Start();
+                        if (_pendingRecoverySnapshots.Count > 0)
+                            _recoveryTimer.Start();
                         return;
                     }
                 openViews = Array.Empty<QueryTabView>();
@@ -576,6 +670,7 @@ public partial class MainWindow : Window
     private async Task CleanupShellResourcesAsync(IReadOnlyList<QueryTabView> views)
     {
         foreach (var view in views) await view.Document.DisposeAsync();
+        _pendingRecoverySnapshots.Clear();
         await _objectExplorer.DisposeAsync();
         await DisposeRecoverySessionsAsync();
     }
@@ -701,4 +796,9 @@ public partial class MainWindow : Window
         }
         return null;
     }
+
+    private readonly record struct ObjectExplorerContext(
+        Guid LogicalSessionId,
+        Guid GenerationId,
+        string Database);
 }

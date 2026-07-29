@@ -12,6 +12,17 @@ public static class ProductionServices
     public static ServiceProvider Build(string settingsPath, ApplicationSettings? applicationSettings = null)
     {
         var settings = (applicationSettings ?? new ApplicationSettings()).Validate();
+        var fullSettingsPath = Path.GetFullPath(settingsPath);
+        var settingsDirectory = Path.GetDirectoryName(fullSettingsPath)
+            ?? throw new ArgumentException("Settings must have a parent directory.", nameof(settingsPath));
+        var stateDirectory = string.Equals(
+            fullSettingsPath,
+            Path.GetFullPath(DefaultSettingsPath),
+            StringComparison.OrdinalIgnoreCase)
+            ? settingsDirectory
+            : Path.Combine(
+                settingsDirectory,
+                Path.GetFileNameWithoutExtension(fullSettingsPath) + ".state");
         var services = new ServiceCollection();
         services.AddSingleton<INpgsqlConnectionFactory>(NpgsqlConnectionFactory.Shared);
         services.AddSingleton<IConnectionDiagnostics, DiagnosticConnectionDiagnostics>();
@@ -23,8 +34,10 @@ public static class ProductionServices
         services.AddSingleton<IProtectedCredentialStore, WindowsCredentialStore>();
         services.AddSingleton<CredentialLifecycleService>();
         services.AddSingleton<IConnectionProfileStore>(sp => new JsonConnectionProfileStore(
-            DefaultConnectionProfilesPath,
+            Path.Combine(stateDirectory, "connections.json"),
             sp.GetRequiredService<CredentialLifecycleService>()));
+        services.AddSingleton(new RecoverySnapshotService(
+            Path.Combine(stateDirectory, "recovery")));
         services.AddSingleton<IQueryExecutor>(sp => new NpgsqlQueryExecutor(sp.GetRequiredService<INpgsqlConnectionFactory>()));
         services.AddSingleton<IPostgresVersionQuery>(sp => new NpgsqlPostgresVersionQuery(sp.GetRequiredService<INpgsqlConnectionFactory>()));
         services.AddSingleton<NpgsqlMetadataProvider>(sp => new(sp.GetRequiredService<INpgsqlConnectionFactory>()));

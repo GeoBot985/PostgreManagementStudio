@@ -25,12 +25,37 @@ public sealed class ProductionCompositionTests
         Assert.NotNull(provider.GetRequiredService<ObjectExplorerService>());
         Assert.NotNull(provider.GetRequiredService<DestructiveOperationGuard>());
         Assert.IsType<WpfUserConfirmationService>(provider.GetRequiredService<IUserConfirmationService>());
+        Assert.NotNull(provider.GetRequiredService<RecoverySnapshotService>());
         Assert.NotNull(provider.GetRequiredService<NpgsqlActivityService>());
         Assert.NotNull(provider.GetRequiredService<NpgsqlExecutionPlanService>());
         Assert.DoesNotContain(
             provider.GetServices<IQueryExecutor>(),
             service => service.GetType().Name.Contains("Fake", StringComparison.OrdinalIgnoreCase) ||
                        service.GetType().Name.Contains("Mock", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    [Trait("Category", "Component")]
+    [Trait("Priority", "P0")]
+    public void AlternateSettingsPath_IsolatesProfilesAndRecoveryFromUserState()
+    {
+        var settingsPath = Path.Combine(
+            Path.GetTempPath(),
+            $"pms-isolation-{Guid.NewGuid():N}.json");
+        using var provider = ProductionServices.Build(settingsPath);
+
+        var profileStore = Assert.IsType<JsonConnectionProfileStore>(
+            provider.GetRequiredService<IConnectionProfileStore>());
+        var expectedStateDirectory = Path.Combine(
+            Path.GetDirectoryName(settingsPath)!,
+            Path.GetFileNameWithoutExtension(settingsPath) + ".state");
+        Assert.Equal(
+            Path.Combine(expectedStateDirectory, "connections.json"),
+            profileStore.Path,
+            ignoreCase: true);
+        Assert.NotEqual(
+            Path.GetFullPath(ProductionServices.DefaultConnectionProfilesPath),
+            profileStore.Path);
     }
 
     [Fact]

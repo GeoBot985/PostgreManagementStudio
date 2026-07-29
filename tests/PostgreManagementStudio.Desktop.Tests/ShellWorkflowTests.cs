@@ -65,7 +65,7 @@ public sealed class ShellWorkflowTests
 
             var menu = Assert.IsType<Menu>(window.FindName("MainMenu"));
             var headings = menu.Items.OfType<MenuItem>().Select(x => x.Header?.ToString()).ToArray();
-            Assert.Equal(new[] { "_File", "_Edit", "_View", "_Query", "_Tools", "_Window", "_Help" }, headings);
+            Assert.Equal(new[] { "_File", "_Edit", "_View", "_Query", "_Database", "_Tools", "_Window", "_Help" }, headings);
             Assert.True(window.MinWidth <= 1024);
             Assert.True(window.MinHeight <= 768);
             Assert.IsType<ToolBarTray>(window.FindName("ShellToolbars"));
@@ -123,6 +123,49 @@ public sealed class ShellWorkflowTests
 
     [Fact]
     [Trait("Category", "UiIntegration")]
+    [Trait("Priority", "P0")]
+    public void RecoveredWorkspace_RestoresUnsavedSqlWithoutConnectionOrExecution()
+    {
+        var snapshot = new RecoverySnapshot(
+            Guid.NewGuid(),
+            "Recovered Query.sql",
+            null,
+            "SELECT 'recovered';",
+            DateTimeOffset.UtcNow,
+            EncodingKind.Utf8,
+            "recovery_database",
+            8);
+
+        RunSta((window, provider) =>
+        {
+            window.Show();
+            PumpDispatcherUntil(
+                () => provider.GetRequiredService<QueryTabManager>().Documents.Single().SqlText == snapshot.Text,
+                TimeSpan.FromSeconds(5));
+
+            var document = provider.GetRequiredService<QueryTabManager>().Documents.Single();
+            var tabs = Assert.IsType<TabControl>(window.FindName("QueryTabs"));
+            var view = Assert.IsType<QueryTabView>(Assert.IsType<TabItem>(tabs.SelectedItem).Content);
+            var editor = Assert.IsType<TextBox>(view.FindName("SqlText"));
+            Assert.Equal(snapshot.Text, editor.Text);
+            Assert.Equal(snapshot.CaretOffset, editor.CaretIndex);
+            Assert.Equal(snapshot.Database, document.Database);
+            Assert.True(document.IsDirty);
+            Assert.Empty(document.ConnectionString);
+            Assert.Empty(document.ConnectionProfileId);
+            Assert.False(ShellCommands.Execute.CanExecute(null, window));
+
+            document.MarkDirty(false);
+            provider.GetRequiredService<RecoverySnapshotService>().Remove(snapshot.Id);
+        }, provider =>
+        {
+            provider.GetRequiredService<RecoverySnapshotService>()
+                .WriteAsync(snapshot).GetAwaiter().GetResult();
+        });
+    }
+
+    [Fact]
+    [Trait("Category", "UiIntegration")]
     public void StartupAndCleanShutdownStayBoundedAndStopTheOwnedTimer()
     {
         RunSta((window, _) =>
@@ -150,7 +193,9 @@ public sealed class ShellWorkflowTests
             property.Name.Contains("Schema", StringComparison.OrdinalIgnoreCase));
     }
 
-    private static void RunSta(Action<MainWindow, ServiceProvider> test)
+    private static void RunSta(
+        Action<MainWindow, ServiceProvider> test,
+        Action<ServiceProvider>? arrange = null)
     {
         Exception? failure = null;
         var thread = new Thread(() =>
@@ -159,6 +204,7 @@ public sealed class ShellWorkflowTests
             MainWindow? window = null;
             try
             {
+                arrange?.Invoke(provider);
                 window = provider.GetRequiredService<MainWindow>();
                 test(window, provider);
             }

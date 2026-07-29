@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using System.Windows;
 using PostgreManagementStudio.Application;
+using PostgreManagementStudio.Core;
 
 namespace PostgreManagementStudio.Desktop;
 
@@ -22,7 +23,11 @@ public partial class App : System.Windows.Application
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"PostgreManagementStudio could not start.\n\n{ex.Message}", "Startup failed", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(
+                $"PostgreManagementStudio could not start.\n\n{SecretRedactor.Redact(ex.Message)}",
+                "Startup failed",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
             Shutdown(1);
         }
     }

@@ -33,6 +33,7 @@ public partial class QueryTabView : UserControl
     private readonly BackupInspectionService _backupInspection;
     private readonly BackupRestoreOperationController _backupController = new();
     private readonly DocumentFileService _fileService = new(); private SqlDocument _file = new() { DisplayName = "Query" };
+    private Guid _recoveryId = Guid.NewGuid();
     public QueryTabView(QueryDocument document, DestructiveOperationGuard destructiveOperations,
         ApplicationSettings settings, BackupRestoreOperationService backupRestore,
         PostgreSqlToolDiscoveryService backupTools, BackupInspectionService backupInspection,
@@ -74,6 +75,7 @@ public partial class QueryTabView : UserControl
     }
 
     public QueryDocument Document => _document;
+    public Guid RecoveryId => _recoveryId;
     public ShellConnectionInfo? Connection => _connection;
     public bool IncludeActualPlan { get; set; }
     public bool HasResults => _session?.ResultSets.Count > 0;
@@ -174,6 +176,45 @@ public partial class QueryTabView : UserControl
         _document.Database = database.Trim();
         DatabaseText.Text = _document.Database;
         WorkspaceStateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public RecoverySnapshot CreateRecoverySnapshot()
+    {
+        var caretOffset = Math.Clamp(SqlText.CaretIndex, 0, SqlText.Text.Length);
+        return new(
+            _recoveryId,
+            _file.DisplayName,
+            _file.FilePath,
+            SqlText.Text,
+            DateTimeOffset.UtcNow,
+            _file.EncodingKind,
+            _document.Database,
+            caretOffset);
+    }
+
+    public void RestoreRecoverySnapshot(RecoverySnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (_document.IsExecuting)
+            throw new InvalidOperationException("A running query cannot be replaced by recovered content.");
+
+        _initializing = true;
+        try
+        {
+            _recoveryId = snapshot.Id;
+            _file = SqlDocument.FromRecovery(snapshot);
+            SqlText.Text = snapshot.Text;
+            SqlText.CaretIndex = Math.Clamp(snapshot.CaretOffset, 0, snapshot.Text.Length);
+            _document.SqlText = snapshot.Text;
+            _document.Database = snapshot.Database;
+            _document.MarkDirty();
+            DatabaseText.Text = snapshot.Database;
+            StatusText.Text = $"Recovered unsaved query from {snapshot.Timestamp.LocalDateTime:g}.";
+        }
+        finally
+        {
+            _initializing = false;
+        }
     }
 
     public async Task ExecuteAsync()

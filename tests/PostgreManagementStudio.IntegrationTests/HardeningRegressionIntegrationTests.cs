@@ -169,4 +169,89 @@ public sealed class HardeningRegressionIntegrationTests
             if (File.Exists(destination)) File.Delete(destination);
         }
     }
+
+    [SeededPostgreSqlFact]
+    [Trait("Category", "EndToEnd")]
+    [Trait("Priority", "P1")]
+    public async Task CsvImport_QuotedValuesNullsAndTransactionReachPostgreSqlExactly()
+    {
+        var table = "Sprint 44 Import " + Guid.NewGuid().ToString("N")[..10];
+        var qualifiedTable = PostgreSqlIdentifierQuoter.Qualified("PMS Regression", table);
+        var source = Path.Combine(
+            Path.GetTempPath(),
+            $"pms-s44-import-{Guid.NewGuid():N}.csv");
+        try
+        {
+            await using (var setup = NpgsqlConnectionFactory.Shared.Create(
+                             ConnectionString,
+                             "PostgreManagementStudio - Sprint 44 Import Setup"))
+            {
+                await setup.OpenAsync();
+                await using var create = new NpgsqlCommand(
+                    $"CREATE TABLE {qualifiedTable} (id integer PRIMARY KEY, name text NOT NULL, note text NULL)",
+                    setup);
+                await create.ExecuteNonQueryAsync();
+            }
+
+            await File.WriteAllTextAsync(
+                source,
+                "id,name,note\r\n1,\"A, B\",\"line 1\r\nline 2\"\r\n2,00123,\\N\r\n");
+            var request = new ImportRequest(
+                source,
+                "PMS Regression",
+                table,
+                [
+                    new(0, "id"),
+                    new(1, "name"),
+                    new(2, "note"),
+                ],
+                new(),
+                new(
+                    Strategy: ImportStrategy.BatchInsert,
+                    Transaction: TransactionMode.AllRows),
+                [
+                    new("id", "integer", false),
+                    new("name", "text", false),
+                    new("note", "text", true),
+                ]);
+
+            var result = await new NpgsqlDataTransferService().ImportAsync(
+                ConnectionString,
+                request);
+            Assert.Equal("Completed", result.Status);
+            Assert.Equal(2, result.RowsRead);
+            Assert.Equal(2, result.RowsWritten);
+            Assert.Equal(0, result.RowsRejected);
+
+            await using var verify = NpgsqlConnectionFactory.Shared.Create(
+                ConnectionString,
+                "PostgreManagementStudio - Sprint 44 Import Verification");
+            await verify.OpenAsync();
+            await using var command = new NpgsqlCommand(
+                $"SELECT id, name, note FROM {qualifiedTable} ORDER BY id",
+                verify);
+            await using var reader = await command.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal(1, reader.GetInt32(0));
+            Assert.Equal("A, B", reader.GetString(1));
+            Assert.Equal("line 1\r\nline 2", reader.GetString(2));
+            Assert.True(await reader.ReadAsync());
+            Assert.Equal(2, reader.GetInt32(0));
+            Assert.Equal("00123", reader.GetString(1));
+            Assert.True(reader.IsDBNull(2));
+            Assert.False(await reader.ReadAsync());
+        }
+        finally
+        {
+            File.Delete(source);
+            await using var cleanup = NpgsqlConnectionFactory.Shared.Create(
+                ConnectionString,
+                "PostgreManagementStudio - Sprint 44 Import Cleanup");
+            await cleanup.OpenAsync();
+            await using var drop = new NpgsqlCommand(
+                $"DROP TABLE IF EXISTS {qualifiedTable}",
+                cleanup);
+            await drop.ExecuteNonQueryAsync();
+        }
+    }
 }

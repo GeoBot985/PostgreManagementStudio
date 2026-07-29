@@ -7,6 +7,7 @@ using PostgreManagementStudio.Results;
 
 namespace PostgreManagementStudio.IntegrationTests;
 
+[Collection(ResourceStabilityCollection.Name)]
 public sealed class PerformanceHardeningIntegrationTests
 {
     private static string ConnectionString =>
@@ -73,31 +74,54 @@ public sealed class PerformanceHardeningIntegrationTests
     [LargeDatasetFact]
     public async Task RepeatedConnectionsQueriesAndDisposalStabilise()
     {
-        var managedSamples = new List<long>();
-        var handleSamples = new List<int>();
-        for (var cycle = 0; cycle < 20; cycle++)
+        NpgsqlConnection.ClearAllPools();
+        try
         {
-            await using var connection = new NpgsqlConnection(ConnectionString);
-            await connection.OpenAsync();
-            await using var command = new NpgsqlCommand(
-                "SELECT seed FROM pms_perf_1.million_row_source ORDER BY seed LIMIT 1000",
-                connection);
-            await using var reader = await command.ExecuteReaderAsync();
-            while (await reader.ReadAsync()) _ = reader.GetInt32(0);
+            for (var warmup = 0; warmup < 5; warmup++)
+                await RunConnectionCycleAsync();
+            ForceCollection();
 
-            if (cycle % 5 == 4)
+            var managedSamples = new List<long>();
+            var handleSamples = new List<int>();
+            for (var cycle = 0; cycle < 20; cycle++)
             {
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
-                GC.Collect();
-                managedSamples.Add(GC.GetTotalMemory(true));
-                handleSamples.Add(Process.GetCurrentProcess().HandleCount);
-            }
-        }
+                await RunConnectionCycleAsync();
 
-        Assert.True(managedSamples[^1] <= managedSamples[0] + 16L * 1024 * 1024,
-            $"Managed heap trend grew from {managedSamples[0]:N0} to {managedSamples[^1]:N0} bytes.");
-        Assert.True(handleSamples[^1] <= handleSamples[0] + 32,
-            $"Handle trend grew from {handleSamples[0]} to {handleSamples[^1]}.");
+                if (cycle % 5 == 4)
+                {
+                    ForceCollection();
+                    managedSamples.Add(GC.GetTotalMemory(true));
+                    handleSamples.Add(Process.GetCurrentProcess().HandleCount);
+                }
+            }
+
+            Assert.True(managedSamples[^1] <= managedSamples[0] + 16L * 1024 * 1024,
+                $"Managed heap trend grew from {managedSamples[0]:N0} to {managedSamples[^1]:N0} bytes.");
+            Assert.True(handleSamples[^1] <= handleSamples[0] + 32,
+                $"Handle trend grew from {handleSamples[0]} to {handleSamples[^1]}.");
+        }
+        finally
+        {
+            NpgsqlConnection.ClearAllPools();
+        }
+    }
+
+    private static async Task RunConnectionCycleAsync()
+    {
+        await using var connection = new NpgsqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT seed FROM pms_perf_1.million_row_source ORDER BY seed LIMIT 1000",
+            connection);
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            _ = reader.GetInt32(0);
+    }
+
+    private static void ForceCollection()
+    {
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
     }
 }

@@ -7,6 +7,22 @@ public enum SqlDocumentState { Untitled, Saved, Modified, ExternallyModified, De
 public sealed class SqlDocument
 {
     public static SqlDocument FromLoaded(LoadedSqlDocument loaded) { var document = new SqlDocument { DisplayName = Path.GetFileName(loaded.Path) }; document.MarkLoaded(loaded.Path, loaded.Text, loaded.Encoding, loaded.LastWriteTime); return document; }
+    public static SqlDocument FromRecovery(RecoverySnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        var document = new SqlDocument
+        {
+            Id = snapshot.Id,
+            DisplayName = snapshot.DisplayName,
+        };
+        document.MarkLoaded(
+            snapshot.FilePath,
+            snapshot.Text,
+            snapshot.Encoding,
+            writeTime: null,
+            recovered: true);
+        return document;
+    }
     public Guid Id { get; init; } = Guid.NewGuid();
     public string DisplayName { get; set; } = "Query";
     public string? FilePath { get; private set; }
