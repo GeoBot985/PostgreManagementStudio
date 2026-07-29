@@ -5,24 +5,25 @@ finish one usable surface rather than expose another collection of buttons.
 
 ## Sprint 50 — Restore workspace and release-shell persistence
 
-- Target workflows: backup inspection, backup creation, restore target review,
-  restore progress/recovery, settings/layout persistence.
+- Completed workflows: restore inspection/target review/progress/cancellation and
+  database object search with filtering, sortable results and copy action.
 - Backend support: `BackupRestoreOperationService`, inspection/validation,
   atomic output, `ApplicationSettings`, recovery snapshots.
-- Composition required: durable restore workspace, archive/target selectors,
-  validation summary, progress/log panes, cancellation, post-restore state
-  refresh, persisted shell preferences.
-- Unknowns: exact PostgreSQL tool/version matrix and target database policy.
+- Composition delivered: `RestoreWorkspaceWindow` and
+  `ObjectSearchWorkspaceWindow`, routed from the shared shell with singleton
+  lifetime per query tab and cancellation/disposal on close or connection change.
+- Deferred: live activity monitor; settings/layout persistence remains outside
+  this sprint because no safe user-facing options contract is composed yet.
 - Dependencies: current release shell and destructive-operation guard.
-- Acceptance: no ambiguous target; inspect-before-restore; cancellation and
-  failure leave a reconciled state; archive/history evidence is retained; a
-  clean restart restores approved layout state.
-- Risk: large.
+- Acceptance: met for the delivered restore/search workflows; see
+  `docs/sprints/SPRINT_50_REPORT.md` and Sprint 50 evidence.
+- Risk: medium, with external PostgreSQL tool/version qualification still open.
 
 ## Sprint 51 — Database search and live activity workspace
 
-- Target workflows: object search/navigation; activity refresh/filter/select;
-  session cancellation/termination with confirmation.
+- Target workflows: activity refresh/filter/select; session
+  cancellation/termination with confirmation; optional object activation/history
+  polish for the Sprint 50 search workspace.
 - Backend support: object search, activity snapshot/presentation,
   session-management service, recovery identity safeguards.
 - Composition required: searchable result grid, object activation, live refresh

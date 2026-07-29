@@ -13,9 +13,9 @@ administration coverage that is not composed into the desktop.
 | Results/export | KEEP_FOR_CURRENT_RELEASE | END_TO_END_REACHABLE | Makes query output useful and portable | Result store, serializers, paging | medium | Output is compact and not editable | 5 |
 | Session restoration | KEEP_FOR_CURRENT_RELEASE | END_TO_END_REACHABLE | Protects unsaved SQL after restart/failure | Recovery snapshot store | small | No selective recovery manager | 6 |
 | Query plans | COMPLETE_BEFORE_RELEASE | PARTIALLY_REACHABLE | Helps users understand query cost and access paths | Plan provider plus explorer models | large | Actual-plan side effects and weak visual navigation | 7 |
-| Backup/restore | COMPLETE_BEFORE_RELEASE | PARTIALLY_REACHABLE | Essential data-safety workflow | External tools, validators, destructive guard | large | Target confusion, progress/recovery, tool/version scope | 8 |
-| Live activity/session monitor | COMPLETE_BEFORE_RELEASE | DIAGNOSTIC_OR_TEMPORARY_UI | Operational visibility and safe session intervention | Activity/session services and routed actions | large | Stale selection and destructive termination | 9 |
-| Object search | COMPLETE_BEFORE_RELEASE | DIAGNOSTIC_OR_TEMPORARY_UI | Fast navigation across database objects | Search service and metadata navigation | medium | Raw output cannot navigate to an object | 10 |
+| Backup/restore | KEEP_FOR_CURRENT_RELEASE | END_TO_END_REACHABLE | Essential data-safety workflow | External tools, validators, destructive guard | large | Target/tool/version qualification and post-restore refresh | 8 |
+| Object search | KEEP_FOR_CURRENT_RELEASE | END_TO_END_REACHABLE | Fast navigation across database objects | Search service and shell workspace | medium | Object activation/history remain deferred | 9 |
+| Live activity/session monitor | DEFER_TO_LATER_RELEASE | SERVICE_ONLY | Operational visibility and safe session intervention | Activity/session services and routed actions | large | Requires refresh/filter/grid and stale-selection safeguards | 10 |
 | Data-transfer wizard | COMPLETE_BEFORE_RELEASE | PARTIALLY_REACHABLE | Safe import/migration with review and progress | Transfer service, mapping and transaction policy | large | Partial import, constraints and rejected-row handling | 11 |
 | Settings/layout | DEFER_TO_LATER_RELEASE | SERVICE_ONLY/PARTIALLY_REACHABLE | User control over defaults and shell state | Settings store and shell persistence | medium | Persistence semantics not yet user-visible | 12 |
 | Transaction workspace | DEFER_TO_LATER_RELEASE | SERVICE_ONLY | Explicit transaction control for advanced users | Query executor and recovery policy | large | Misrepresenting commit/rollback state | 13 |
@@ -33,7 +33,7 @@ administration coverage that is not composed into the desktop.
 
 The current release should advertise a compact SQL editor, PostgreSQL
 connection/session, Object Explorer browsing, query execution/cancellation,
-result viewing/export, basic file operations, and recovery snapshots. It should
-not advertise a full administration suite, live monitoring, role management,
-schema synchronisation, index recommendations, query-performance dashboards,
-or visual plan analysis.
+result viewing/export, basic file operations, recovery snapshots, restore
+review/execution, and database object search. It should not advertise a full
+administration suite, live monitoring, role management, schema synchronisation,
+index recommendations, query-performance dashboards, or visual plan analysis.

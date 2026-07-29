@@ -20,6 +20,7 @@ public partial class MainWindow : Window
     private readonly BackupRestoreOperationService _backupRestore;
     private readonly PostgreSqlToolDiscoveryService _backupTools;
     private readonly BackupInspectionService _backupInspection;
+    private readonly NpgsqlObjectSearchService _objectSearch;
     private readonly IConnectionProbe _connectionProbe;
     private readonly IConnectionRecoveryDiagnostics _connectionDiagnostics;
     private readonly IPerformanceDiagnostics _performanceDiagnostics;
@@ -46,6 +47,7 @@ public partial class MainWindow : Window
         BackupRestoreOperationService backupRestore,
         PostgreSqlToolDiscoveryService backupTools,
         BackupInspectionService backupInspection,
+        NpgsqlObjectSearchService objectSearch,
         IConnectionProbe connectionProbe,
         IConnectionRecoveryDiagnostics connectionDiagnostics,
         IPerformanceDiagnostics performanceDiagnostics,
@@ -64,6 +66,7 @@ public partial class MainWindow : Window
         _backupRestore = backupRestore;
         _backupTools = backupTools;
         _backupInspection = backupInspection;
+        _objectSearch = objectSearch;
         _connectionProbe = connectionProbe;
         _connectionDiagnostics = connectionDiagnostics;
         _performanceDiagnostics = performanceDiagnostics;
@@ -126,13 +129,12 @@ public partial class MainWindow : Window
         BindAsync(ShellCommands.ExportResults, () => ActiveView!.ExportResultsAsync(), _ => State.CanExecute(ShellCommandId.ResultAction));
         Bind(ShellCommands.FindInResults, _ => ActiveView!.ShowResultSearch(), _ => State.CanExecute(ShellCommandId.ResultAction));
         Bind(ShellCommands.ClearResults, _ => ActiveView!.ClearResultView(), _ => State.CanExecute(ShellCommandId.ResultAction));
-        BindAsync(ShellCommands.SearchObjects, () => ActiveView!.SearchObjectsAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
+        BindAsync(ShellCommands.SearchObjects, () => ActiveView!.OpenSearchWorkspaceAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
         BindAsync(ShellCommands.ImportData, () => ActiveView!.ImportDataAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
         BindAsync(ShellCommands.Backup, () => ActiveView!.BackupDatabaseAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
-        BindAsync(ShellCommands.Restore, () => ActiveView!.RestoreDatabaseAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
+        BindAsync(ShellCommands.Restore, () => ActiveView!.OpenRestoreWorkspaceAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
         BindAsync(ShellCommands.Maintenance, () => ActiveView!.RunMaintenanceAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
         BindAsync(ShellCommands.Security, () => ActiveView!.ShowSecurityRolesAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
-        BindAsync(ShellCommands.ActivityMonitor, () => ActiveView!.ShowActivityMonitorAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
         Bind(ShellCommands.ShowObjectExplorer, _ => SetObjectExplorerVisible(ObjectExplorerPane.Visibility != Visibility.Visible), _ => true);
         Bind(ShellCommands.ShowResults, _ => ActiveView!.ShowOutput(0), _ => ActiveView is not null);
         Bind(ShellCommands.ShowMessages, _ => ActiveView!.ShowOutput(1), _ => ActiveView is not null);
@@ -187,7 +189,7 @@ public partial class MainWindow : Window
         doc.CommandTimeout = TimeSpan.FromSeconds(_settings.CommandTimeoutSeconds);
         doc.CancellationTimeout = TimeSpan.FromSeconds(_settings.CancellationTimeoutSeconds);
         var view = new QueryTabView(doc, _destructiveOperations, _settings, _backupRestore,
-            _backupTools, _backupInspection, _performanceDiagnostics);
+            _backupTools, _backupInspection, _objectSearch, _performanceDiagnostics);
         if (recoverySnapshot is not null)
             view.RestoreRecoverySnapshot(recoverySnapshot);
         var tab = new TabItem { Content = view, Tag = doc };

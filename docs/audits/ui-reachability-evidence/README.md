@@ -41,3 +41,11 @@ connection credentials, connection strings, or database content were entered.
 Screenshots were used during the live inspection to verify visual placement,
 but are not stored here because the audit can be reproduced from the steps and
 the source evidence without retaining machine-specific window imagery.
+
+## Sprint 50 workspace evidence
+
+The Sprint 50 shell routes now open the durable restore and object-search
+workspaces described in [sprint-50-workspaces.md](sprint-50-workspaces.md).
+The activity snapshot route was removed from the release command surface
+because it did not meet the workspace standard; its backend service remains
+available for the deferred live monitor sprint.

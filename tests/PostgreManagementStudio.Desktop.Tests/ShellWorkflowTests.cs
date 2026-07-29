@@ -8,6 +8,7 @@ using System.Windows.Input;
 using System.Windows.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using PostgreManagementStudio.Application;
+using PostgreManagementStudio.Postgres;
 
 namespace PostgreManagementStudio.Desktop.Tests;
 
@@ -203,6 +204,44 @@ public sealed class ShellWorkflowTests
     {
         Assert.DoesNotContain(typeof(ShellCommands).GetProperties(), property =>
             property.Name.Contains("Schema", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Sprint50_CommandSurfaceUsesSharedRestoreAndSearchRoutes()
+    {
+        Assert.Contains(typeof(ShellCommands).GetProperties(), property => property.Name == nameof(ShellCommands.Restore));
+        Assert.Contains(typeof(ShellCommands).GetProperties(), property => property.Name == nameof(ShellCommands.SearchObjects));
+        Assert.Contains(ShellCommands.SearchObjects.InputGestures.Cast<InputGesture>(), gesture =>
+            gesture is KeyGesture { Key: Key.F, Modifiers: ModifierKeys.Control | ModifierKeys.Shift });
+        Assert.DoesNotContain(typeof(ShellCommands).GetProperties(), property => property.Name == "ActivityMonitor");
+    }
+
+    [Fact]
+    [Trait("Category", "UiIntegration")]
+    public void Sprint50_WorkspacesExposeDurableControlsAndSafeTargeting()
+    {
+        RunSta((window, provider) =>
+        {
+            var target = new DatabaseConnection("localhost", 5432, "postgres", "postgres");
+            var restore = new RestoreWorkspaceWindow(
+                provider.GetRequiredService<BackupRestoreOperationService>(),
+                provider.GetRequiredService<PostgreSqlToolDiscoveryService>(),
+                provider.GetRequiredService<BackupInspectionService>(),
+                provider.GetRequiredService<DestructiveOperationGuard>(), target,
+                "Host=localhost;Database=postgres;Username=postgres", "test-profile", "localhost:5432", "Test");
+            var search = new ObjectSearchWorkspaceWindow(
+                provider.GetRequiredService<NpgsqlObjectSearchService>(),
+                "Host=localhost;Database=postgres;Username=postgres", "localhost:5432", "postgres");
+
+            Assert.Contains(LogicalDescendants(restore).OfType<TextBlock>(), text => text.Text == "Restore workspace");
+            Assert.Contains(LogicalDescendants(restore).OfType<CheckBox>(), box => box.Content?.ToString() == "Clean existing objects");
+            Assert.Contains(LogicalDescendants(search).OfType<TextBlock>(), text => text.Text == "Database object search");
+            Assert.Contains(LogicalDescendants(search).OfType<DataGrid>(), grid => grid.Columns.Count >= 6);
+            Assert.Equal("Restore PostgreSQL database", restore.Title);
+            Assert.Equal("Search database objects", search.Title);
+            restore.Close();
+            search.Close();
+        });
     }
 
     private static void RunSta(

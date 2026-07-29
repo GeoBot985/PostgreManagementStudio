@@ -31,12 +31,16 @@ public partial class QueryTabView : UserControl
     private readonly BackupRestoreOperationService _backupRestore;
     private readonly PostgreSqlToolDiscoveryService _backupTools;
     private readonly BackupInspectionService _backupInspection;
+    private readonly NpgsqlObjectSearchService _objectSearch;
+    private RestoreWorkspaceWindow? _restoreWorkspace;
+    private ObjectSearchWorkspaceWindow? _objectSearchWorkspace;
     private readonly BackupRestoreOperationController _backupController = new();
     private readonly DocumentFileService _fileService = new(); private SqlDocument _file = new() { DisplayName = "Query" };
     private Guid _recoveryId = Guid.NewGuid();
     public QueryTabView(QueryDocument document, DestructiveOperationGuard destructiveOperations,
         ApplicationSettings settings, BackupRestoreOperationService backupRestore,
         PostgreSqlToolDiscoveryService backupTools, BackupInspectionService backupInspection,
+        NpgsqlObjectSearchService objectSearch,
         IPerformanceDiagnostics performanceDiagnostics)
     {
         InitializeComponent();
@@ -46,6 +50,7 @@ public partial class QueryTabView : UserControl
         _backupRestore = backupRestore;
         _backupTools = backupTools;
         _backupInspection = backupInspection;
+        _objectSearch = objectSearch;
         _performanceDiagnostics = performanceDiagnostics;
         _document.ExecutionStateChanged += Document_ExecutionStateChanged;
         Unloaded += QueryTabView_Unloaded;
@@ -59,6 +64,8 @@ public partial class QueryTabView : UserControl
     private async void QueryTabView_Unloaded(object sender, RoutedEventArgs e)
     {
         _isUnloaded = true;
+        _restoreWorkspace?.Close();
+        _objectSearchWorkspace?.Close();
         _document.ExecutionStateChanged -= Document_ExecutionStateChanged;
         if (_connection is not null) _connection.Session.StateChanged -= RecoverySession_StateChanged;
         try
@@ -123,6 +130,8 @@ public partial class QueryTabView : UserControl
     public void ApplyConnection(ShellConnectionInfo? connection)
     {
         if (_document.IsExecuting) throw new InvalidOperationException("A running query retains its existing connection.");
+        _restoreWorkspace?.Close();
+        _objectSearchWorkspace?.Close();
         if (_connection is not null) _connection.Session.StateChanged -= RecoverySession_StateChanged;
         _connection = connection;
         if (_connection is not null) _document.Database = _connection.Database;
@@ -593,7 +602,7 @@ public partial class QueryTabView : UserControl
         finally { UpdateCommandState(); }
     }
 
-    public async Task RestoreDatabaseAsync()
+    private async Task LegacyRestoreDatabaseAsync()
     {
         var dialog = new OpenFileDialog
         {
@@ -647,11 +656,38 @@ public partial class QueryTabView : UserControl
         foreach (var warning in result.Warnings)
             MessagesText.AppendText($"{Environment.NewLine}WARNING: {warning}");
     }
+
+    public Task OpenRestoreWorkspaceAsync()
+    {
+        if (!IsRecoveryConnected) { MessagesText.Text = "Reconnect before opening the restore workspace."; OutputTabs.SelectedIndex = 1; return Task.CompletedTask; }
+        if (_restoreWorkspace is { IsVisible: true }) { _restoreWorkspace.Activate(); return Task.CompletedTask; }
+        var connection = DatabaseConnection.FromConnectionString(CurrentConnectionString()) with { Database = DatabaseText.Text };
+        _restoreWorkspace = new RestoreWorkspaceWindow(_backupRestore, _backupTools, _backupInspection, _destructiveOperations,
+            connection, CurrentConnectionString(), _document.ConnectionProfileId, $"{connection.Host}:{connection.Port}", Connection?.Configuration.Profile.EnvironmentDisplayName)
+        { Owner = Window.GetWindow(this) };
+        _restoreWorkspace.Closed += (_, _) => _restoreWorkspace = null;
+        _restoreWorkspace.Show();
+        return Task.CompletedTask;
+    }
+
     public async Task ShowSecurityRolesAsync() { try { var roles = await new NpgsqlSecurityService().LoadRolesAsync(CurrentConnectionString()); MessagesText.Text = string.Join(Environment.NewLine, roles.Select(r => $"{UntrustedText.ForDisplay(r.Name)} {(r.CanLogin ? "LOGIN" : "GROUP")} {(r.IsSuperuser ? "SUPERUSER" : "")}")); StatusText.Text = $"Loaded {roles.Count:N0} roles."; OutputTabs.SelectedIndex = 1; } catch (Exception ex) { MessagesText.Text = SecretRedactor.Redact(ex.Message); StatusText.Text = "Security metadata unavailable."; OutputTabs.SelectedIndex = 1; } }
     public async Task ShowActivityMonitorAsync() { try { var snapshot = await new NpgsqlActivityService().LoadSnapshotAsync(CurrentConnectionString(), DateTime.UtcNow.Ticks); ResultSummary.Text = $"Sessions {snapshot.Summary.TotalSessions:N0} · Active {snapshot.Summary.ActiveSessions:N0} · Idle {snapshot.Summary.IdleSessions:N0} · Blocked {snapshot.Summary.BlockedSessions:N0}"; MessagesText.Text = string.Join(Environment.NewLine, snapshot.Sessions.Select(s => UntrustedText.ForDisplay($"{s.ProcessId} {s.ClassifiedState} {s.Database} {s.User} {s.Duration:g} {s.Query}", 2_048))); StatusText.Text = $"Activity snapshot {snapshot.ServerTime:O}"; OutputTabs.SelectedIndex = 1; } catch (Exception ex) { MessagesText.Text = SecretRedactor.Redact(ex.Message); StatusText.Text = "Activity monitor unavailable."; OutputTabs.SelectedIndex = 1; } }
     public async Task RunMaintenanceAsync() { try { var cs = CurrentConnectionString(); var connection = DatabaseConnection.FromConnectionString(cs) with { Database = DatabaseText.Text }; if (Connection?.Configuration.Profile.EffectiveReadOnly == true) throw new InvalidOperationException("Maintenance is disabled because this session is configured read-only."); var plan = new MaintenancePlan(MaintenanceOperation.Vacuum, new[] { new MaintenanceTarget(MaintenanceTargetKind.Database, connection.Database) }, new(Analyze: true, Verbose: true), new(18)); var sql = string.Join(Environment.NewLine, plan.Statements); if (!_destructiveOperations.Confirm(new(DestructiveOperationKind.Maintenance, "Maintenance confirmation", connection.Database, $"Run maintenance on a dedicated connection? This may take time and hold locks.{Environment.NewLine}{Environment.NewLine}{sql}", "Cancel before confirmation or wait for PostgreSQL to finish safely.", connection.Host, connection.Database, connection.Database, Connection?.Configuration.Profile.EnvironmentDisplayName, Connection?.Session.Snapshot.State == RecoveryConnectionState.Connected))) return; MessagesText.Text = sql; OutputTabs.SelectedIndex = 1; var result = await new NpgsqlMaintenanceService().ExecuteAsync(cs, plan, new Progress<string>(x => MessagesText.AppendText(x + Environment.NewLine))); StatusText.Text = result.Status; } catch (Exception ex) { MessagesText.Text = SecretRedactor.Redact(ex.Message); StatusText.Text = "Maintenance unavailable."; OutputTabs.SelectedIndex = 1; } }
     public async Task ImportDataAsync() { var dialog = new OpenFileDialog { Filter = "Delimited files (*.csv;*.tsv;*.txt)|*.csv;*.tsv;*.txt|All files (*.*)|*.*" }; if (dialog.ShowDialog() != true) return; var tableDialog = new InputDialog("Import data", "Destination table (public schema):"); if (tableDialog.ShowDialog() != true || string.IsNullOrWhiteSpace(tableDialog.Value)) return; try { var settings = DelimitedFileDetector.Detect(dialog.FileName) with { HasHeader = true }; var header = new DelimitedFileReader().Read(dialog.FileName, settings).FirstOrDefault(); if (header is null) throw new InvalidOperationException("The source file contains no data rows."); var request = new ImportRequest(dialog.FileName, "public", tableDialog.Value, header.Select((name, i) => new ColumnMapping(i, name)).ToArray(), settings, new(ImportStrategy.BatchInsert, Transaction: TransactionMode.AllRows), header.Select(name => new DestinationColumn(name, "text", true)).ToArray()); var result = await new NpgsqlDataTransferService().ImportAsync(CurrentConnectionString(), request, new Progress<ImportProgress>(p => StatusText.Text = $"{p.Phase}: {p.RowsWritten:N0} rows")); StatusText.Text = result.Status; MessagesText.Text = string.Join(Environment.NewLine, result.Errors); OutputTabs.SelectedIndex = 1; } catch (Exception ex) { MessagesText.Text = SecretRedactor.Redact(ex.Message); StatusText.Text = "Import unavailable."; OutputTabs.SelectedIndex = 1; } }
-    public async Task SearchObjectsAsync()
+
+    public Task OpenSearchWorkspaceAsync()
+    {
+        if (!IsRecoveryConnected) { MessagesText.Text = "Reconnect before opening the database search workspace."; OutputTabs.SelectedIndex = 1; return Task.CompletedTask; }
+        if (_objectSearchWorkspace is { IsVisible: true }) { _objectSearchWorkspace.Activate(); return Task.CompletedTask; }
+        var connection = DatabaseConnection.FromConnectionString(CurrentConnectionString()) with { Database = DatabaseText.Text };
+        _objectSearchWorkspace = new ObjectSearchWorkspaceWindow(_objectSearch, CurrentConnectionString(), $"{connection.Host}:{connection.Port}", connection.Database)
+        { Owner = Window.GetWindow(this) };
+        _objectSearchWorkspace.Closed += (_, _) => _objectSearchWorkspace = null;
+        _objectSearchWorkspace.Show();
+        return Task.CompletedTask;
+    }
+
+    private async Task LegacySearchObjectsAsync()
     {
         var dialog = new InputDialog("Search database objects", "Name or wildcard:");
         if (dialog.ShowDialog() != true || string.IsNullOrWhiteSpace(dialog.Value)) return;

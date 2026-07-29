@@ -34,13 +34,12 @@ public static class ShellCommands
     public static RoutedUICommand ExportResults { get; } = Create("Export Results", nameof(ExportResults));
     public static RoutedUICommand FindInResults { get; } = Create("Find in Results", nameof(FindInResults));
     public static RoutedUICommand ClearResults { get; } = Create("Clear Result View", nameof(ClearResults));
-    public static RoutedUICommand SearchObjects { get; } = Create("Search Objects", nameof(SearchObjects));
+    public static RoutedUICommand SearchObjects { get; } = Create("Search Objects", nameof(SearchObjects), new KeyGesture(Key.F, ModifierKeys.Control | ModifierKeys.Shift));
     public static RoutedUICommand ImportData { get; } = Create("Import Data", nameof(ImportData));
     public static RoutedUICommand Backup { get; } = Create("Backup Database", nameof(Backup));
     public static RoutedUICommand Restore { get; } = Create("Restore Database", nameof(Restore));
     public static RoutedUICommand Maintenance { get; } = Create("Maintenance", nameof(Maintenance));
     public static RoutedUICommand Security { get; } = Create("Security Roles", nameof(Security));
-    public static RoutedUICommand ActivityMonitor { get; } = Create("Activity Monitor", nameof(ActivityMonitor));
     public static RoutedUICommand ShowObjectExplorer { get; } = Create("Object Explorer", nameof(ShowObjectExplorer));
     public static RoutedUICommand ShowResults { get; } = Create("Results", nameof(ShowResults));
     public static RoutedUICommand ShowMessages { get; } = Create("Messages", nameof(ShowMessages));

@@ -42,7 +42,6 @@
         <MenuItem Header="_Messages" Command="{x:Static local:ShellCommands.ShowMessages}"/>
         <MenuItem Header="Execution _Plan" Command="{x:Static local:ShellCommands.ShowExecutionPlan}"/>
         <Separator/>
-        <MenuItem Header="_Activity Monitor" Command="{x:Static local:ShellCommands.ActivityMonitor}"/>
         <MenuItem Header="Re_fresh Object Explorer" Command="{x:Static local:ShellCommands.RefreshObjectExplorer}"/>
         <Separator/>
         <MenuItem Header="_Toolbars" IsCheckable="True" IsChecked="True" Click="ToggleToolbars_Click"/>
@@ -68,7 +67,7 @@
         <MenuItem Header="_Security Roles…" Command="{x:Static local:ShellCommands.Security}"/>
       </MenuItem>
       <MenuItem Header="_Tools">
-        <MenuItem Header="_Search Objects…" Command="{x:Static local:ShellCommands.SearchObjects}"/>
+        <MenuItem Header="_Search Objects…" Command="{x:Static local:ShellCommands.SearchObjects}" InputGestureText="Ctrl+Shift+F"/>
         <Separator/>
         <MenuItem Header="Options" IsEnabled="False" ToolTip="No validated options workflow is available yet."/>
       </MenuItem>
