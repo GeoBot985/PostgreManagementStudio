@@ -46,6 +46,8 @@ public static class ShellCommands
     public static RoutedUICommand ShowResults { get; } = Create("Results", nameof(ShowResults));
     public static RoutedUICommand ShowMessages { get; } = Create("Messages", nameof(ShowMessages));
     public static RoutedUICommand ShowExecutionPlan { get; } = Create("Execution Plan", nameof(ShowExecutionPlan));
+    public static RoutedUICommand PerformanceDashboard { get; } = Create("Performance Dashboard", nameof(PerformanceDashboard), new KeyGesture(Key.P, ModifierKeys.Control | ModifierKeys.Shift));
+    public static RoutedUICommand BlockingDiagnostics { get; } = Create("Blocking Diagnostics", nameof(BlockingDiagnostics), new KeyGesture(Key.B, ModifierKeys.Control | ModifierKeys.Shift));
     public static RoutedUICommand About { get; } = Create("About PostgreManagementStudio", nameof(About));
 }
 

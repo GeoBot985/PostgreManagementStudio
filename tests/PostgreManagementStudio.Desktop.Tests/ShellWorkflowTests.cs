@@ -330,6 +330,31 @@ public sealed class ShellWorkflowTests
         });
     }
 
+    [Fact]
+    [Trait("Category", "UiIntegration")]
+    public void Sprint54_MonitoringWorkspaceExposesActivityBlockingLocksAndPrivacyControls()
+    {
+        RunSta((window, provider) =>
+        {
+            var monitoring = new MonitoringWorkspaceWindow(
+                provider.GetRequiredService<NpgsqlActivityService>(),
+                "Host=localhost;Database=postgres;Username=postgres",
+                "localhost:5432/postgres");
+
+            Assert.Equal("Performance dashboard — localhost:5432/postgres", monitoring.Title);
+            Assert.Contains(LogicalDescendants(monitoring).OfType<TabControl>(), tabs => tabs.Items.Count >= 4);
+            Assert.Contains(LogicalDescendants(monitoring).OfType<DataGrid>(), grid => grid.Columns.Count >= 9);
+            Assert.Contains(LogicalDescendants(monitoring).OfType<DataGrid>(), grid => grid.Columns.Count >= 7);
+            Assert.Contains(LogicalDescendants(monitoring).OfType<CheckBox>(), check => check.Content?.ToString() == "Include bounded query previews");
+            Assert.Contains(LogicalDescendants(monitoring).OfType<Button>(), button => button.Content?.ToString() == "Save snapshot");
+            Assert.Contains(ShellCommands.PerformanceDashboard.InputGestures.Cast<InputGesture>(), gesture =>
+                gesture is KeyGesture { Key: Key.P, Modifiers: ModifierKeys.Control | ModifierKeys.Shift });
+            Assert.Contains(ShellCommands.BlockingDiagnostics.InputGestures.Cast<InputGesture>(), gesture =>
+                gesture is KeyGesture { Key: Key.B, Modifiers: ModifierKeys.Control | ModifierKeys.Shift });
+            monitoring.Close();
+        });
+    }
+
     private static void RunSta(
         Action<MainWindow, ServiceProvider> test,
         Action<ServiceProvider>? arrange = null)

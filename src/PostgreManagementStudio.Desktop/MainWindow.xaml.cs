@@ -160,6 +160,8 @@ public partial class MainWindow : Window
         Bind(ShellCommands.ShowResults, _ => ActiveView!.ShowOutput(0), _ => ActiveView is not null);
         Bind(ShellCommands.ShowMessages, _ => ActiveView!.ShowOutput(1), _ => ActiveView is not null);
         Bind(ShellCommands.ShowExecutionPlan, _ => ActiveView!.FocusPlanWorkspace(), _ => ActiveView is not null);
+        BindAsync(ShellCommands.PerformanceDashboard, () => ActiveView!.OpenMonitoringWorkspaceAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
+        BindAsync(ShellCommands.BlockingDiagnostics, () => ActiveView!.OpenMonitoringWorkspaceAsync(), _ => State.CanExecute(ShellCommandId.ConnectedTool));
         Bind(ShellCommands.About, _ => MessageBox.Show(this,
             $"PostgreManagementStudio {AssemblyVersionText()}\n\nA PostgreSQL management desktop for Windows.",
             "About PostgreManagementStudio", MessageBoxButton.OK, MessageBoxImage.Information), _ => true);

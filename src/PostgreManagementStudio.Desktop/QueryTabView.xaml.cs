@@ -45,6 +45,7 @@ public partial class QueryTabView : UserControl
     private IndexWorkspaceWindow? _indexWorkspace;
     private SchemaComparisonWorkspaceWindow? _schemaWorkspace;
     private DataTransferWorkspaceWindow? _transferWorkspace;
+    private MonitoringWorkspaceWindow? _monitoringWorkspace;
     private readonly BackupRestoreOperationController _backupController = new();
     private readonly DocumentFileService _fileService = new(); private SqlDocument _file = new() { DisplayName = "Query" };
     private Guid _recoveryId = Guid.NewGuid();
@@ -94,6 +95,7 @@ public partial class QueryTabView : UserControl
         _indexWorkspace?.Close();
         _schemaWorkspace?.Close();
         _transferWorkspace?.Close();
+        _monitoringWorkspace?.Close();
         _document.ExecutionStateChanged -= Document_ExecutionStateChanged;
         if (_connection is not null) _connection.Session.StateChanged -= RecoverySession_StateChanged;
         try
@@ -165,6 +167,7 @@ public partial class QueryTabView : UserControl
         _indexWorkspace?.Close();
         _schemaWorkspace?.Close();
         _transferWorkspace?.Close();
+        _monitoringWorkspace?.Close();
         if (_connection is not null) _connection.Session.StateChanged -= RecoverySession_StateChanged;
         _connection = connection;
         if (_connection is not null) _document.Database = _connection.Database;
@@ -730,6 +733,17 @@ public partial class QueryTabView : UserControl
         { Owner = Window.GetWindow(this) };
         _objectSearchWorkspace.Closed += (_, _) => _objectSearchWorkspace = null;
         _objectSearchWorkspace.Show();
+        return Task.CompletedTask;
+    }
+
+    public Task OpenMonitoringWorkspaceAsync()
+    {
+        if (!IsRecoveryConnected) { MessagesText.Text = "Reconnect before opening the performance dashboard."; OutputTabs.SelectedIndex = 1; return Task.CompletedTask; }
+        if (_monitoringWorkspace is { IsVisible: true }) { _monitoringWorkspace.Activate(); return Task.CompletedTask; }
+        var connection = DatabaseConnection.FromConnectionString(CurrentConnectionString()) with { Database = DatabaseText.Text };
+        _monitoringWorkspace = new MonitoringWorkspaceWindow(new NpgsqlActivityService(), CurrentConnectionString(), $"{connection.Host}:{connection.Port}/{connection.Database}") { Owner = Window.GetWindow(this) };
+        _monitoringWorkspace.Closed += (_, _) => _monitoringWorkspace = null;
+        _monitoringWorkspace.Show();
         return Task.CompletedTask;
     }
 

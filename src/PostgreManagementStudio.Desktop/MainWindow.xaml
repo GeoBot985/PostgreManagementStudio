@@ -41,6 +41,8 @@
         <MenuItem Header="_Results" Command="{x:Static local:ShellCommands.ShowResults}"/>
         <MenuItem Header="_Messages" Command="{x:Static local:ShellCommands.ShowMessages}"/>
         <MenuItem Header="Execution _Plan" Command="{x:Static local:ShellCommands.ShowExecutionPlan}"/>
+        <MenuItem Header="_Performance Dashboard" Command="{x:Static local:ShellCommands.PerformanceDashboard}" InputGestureText="Ctrl+Shift+P"/>
+        <MenuItem Header="_Blocking Diagnostics" Command="{x:Static local:ShellCommands.BlockingDiagnostics}" InputGestureText="Ctrl+Shift+B"/>
         <Separator/>
         <MenuItem Header="Re_fresh Object Explorer" Command="{x:Static local:ShellCommands.RefreshObjectExplorer}"/>
         <Separator/>
@@ -156,6 +158,8 @@
                 <MenuItem Header="Search…" Command="{x:Static local:ShellCommands.SearchObjects}"/>
                 <MenuItem Header="Index Management…" Command="{x:Static local:ShellCommands.IndexManagement}"/>
                 <MenuItem Header="Compare Schemas…" Command="{x:Static local:ShellCommands.SchemaCompare}"/>
+                <MenuItem Header="Performance Dashboard…" Command="{x:Static local:ShellCommands.PerformanceDashboard}"/>
+                <MenuItem Header="Blocking Diagnostics…" Command="{x:Static local:ShellCommands.BlockingDiagnostics}"/>
                 <MenuItem Header="Backup…" Command="{x:Static local:ShellCommands.Backup}"/>
                 <MenuItem Header="Restore…" Command="{x:Static local:ShellCommands.Restore}"/>
                 <MenuItem Header="Maintenance…" Command="{x:Static local:ShellCommands.Maintenance}"/>

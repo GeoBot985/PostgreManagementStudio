@@ -76,9 +76,11 @@ finish one usable surface rather than expose another collection of buttons.
   baseline persistence, navigation to query and plan documents.
 - Unknowns: retention and privacy policy for SQL text.
 - Dependencies: plan explorer and query-history decisions.
-- Acceptance: unavailable `pg_stat_statements` is explicit; baseline identity is
-  database/server-safe; no credential or sensitive SQL leakage.
-- Risk: large.
+- Acceptance: reduced scope met for the server activity dashboard, blocking/
+  lock diagnostics, safe session actions, and activity snapshot export. Query
+  performance and database statistics remain deferred because their PostgreSQL
+  adapters are not present.
+- Risk: medium; query/database statistics need real adapters before composition.
 
 ## Sprint 55/56 — Administration workspaces
 

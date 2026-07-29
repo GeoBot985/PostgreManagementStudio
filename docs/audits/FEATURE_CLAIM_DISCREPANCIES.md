@@ -35,6 +35,13 @@ validation, cancellation and history. PostgreSQL-to-PostgreSQL transfer,
 database/object export, and JSON import in the current preview surface remain
 deferred and are not claimed as complete.
 
+Sprint 54 composes the server activity dashboard, blocking/wait and lock
+diagnostics, target-aware session actions, and privacy-aware activity snapshot
+export. It does not claim query-performance or database-statistics dashboards:
+the current repository has analysis models but no composed PostgreSQL adapters
+for those sources. The dashboard reports that limitation explicitly rather
+than displaying an empty or fabricated statistics view.
+
 The current source-of-truth description is the reachability matrix plus the
 release-scope reset. Future sprint reports may retain historical status, but
 must use “service-only”, “temporary UI”, “partial”, “end-to-end reachable”, or
