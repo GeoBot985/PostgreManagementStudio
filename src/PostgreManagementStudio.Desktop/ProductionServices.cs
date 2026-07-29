@@ -43,6 +43,9 @@ public static class ProductionServices
         services.AddSingleton<NpgsqlMetadataProvider>(sp => new(sp.GetRequiredService<INpgsqlConnectionFactory>()));
         services.AddSingleton<IPostgresMetadataProvider>(sp => sp.GetRequiredService<NpgsqlMetadataProvider>());
         services.AddSingleton<IPostgresObjectMetadataProvider>(sp => sp.GetRequiredService<NpgsqlMetadataProvider>());
+        services.AddTransient<IObjectScriptMetadataProvider, NpgsqlObjectScriptMetadataProvider>();
+        services.AddTransient<ObjectScriptService>();
+        services.AddTransient<IObjectActionService, NpgsqlObjectActionService>();
         services.AddSingleton<IMetadataDiagnostics, DiagnosticMetadataDiagnostics>();
         services.AddSingleton<BoundedMetadataCache>();
         services.AddSingleton<HardenedMetadataService>();

@@ -16,6 +16,8 @@ public sealed class ObjectExplorerTests
 
         Assert.Equal(1, provider.RootLoads);
         Assert.Equal(0, provider.ChildLoads);
+        Assert.True(service.IsCurrent(root, "Host=example", "regression"));
+        Assert.False(service.IsCurrent(root, "Host=example", "another_database"));
         var schema = Assert.Single(root.Children);
         Assert.False(schema.IsLoaded);
 
@@ -32,6 +34,7 @@ public sealed class ObjectExplorerTests
         Assert.Single(tables.Children);
         Assert.Equal("\"Sales Data\".\"Order\"", tables.Children[0].QualifiedName);
         Assert.Contains(schema.Children.SelectMany(x => x.Children), x => x.Name.Contains("Résumé", StringComparison.Ordinal));
+        Assert.Single(schema.Children.Single(x => x.Kind == ObjectExplorerNodeKind.Types).Children);
     }
 
     [Fact]
@@ -48,6 +51,8 @@ public sealed class ObjectExplorerTests
         await service.ExpandAsync(schema, refresh: true);
         var renamed = schema.Children.SelectMany(x => x.Children).Single(x => x.Name == "After");
         Assert.Same(original, renamed);
+        Assert.Equal("After", renamed.RawName);
+        Assert.True(renamed.CanModify);
         Assert.DoesNotContain(schema.Children.SelectMany(x => x.Children), x => x.Name == "Dropped");
     }
 
@@ -183,6 +188,8 @@ public sealed class ObjectExplorerTests
             [
                 new(Identity(10, PostgresObjectClass.Table, "Order", 2), "Order", "Sales Data", "Order",
                     "\"Sales Data\".\"Order\"", MetadataSystemClassification.User, true),
+                new(Identity(12, PostgresObjectClass.EnumType, "Status", 2), "Status", "Sales Data", "Status",
+                    "\"Sales Data\".\"Status\"", MetadataSystemClassification.User, false),
                 new(Identity(11, PostgresObjectClass.View, "Résumé", 2), "Résumé", "Sales Data", "Résumé",
                     "\"Sales Data\".\"Résumé\"", MetadataSystemClassification.User, true),
             ], DateTimeOffset.UtcNow));
@@ -212,9 +219,9 @@ public sealed class ObjectExplorerTests
             return Task.FromResult(new ObjectMetadataBatch(parent, values, DateTimeOffset.UtcNow));
         }
 
-        private static ObjectMetadataDescriptor Descriptor(uint oid, string name) =>
+        private ObjectMetadataDescriptor Descriptor(uint oid, string name) =>
             new(Identity(oid, PostgresObjectClass.Table, name, 2), name, "public", name,
-                $"public.{name}", MetadataSystemClassification.User, true);
+                $"public.{name}", MetadataSystemClassification.User, true, CanModify: Version == 2);
     }
 
     private sealed class CancellingProvider : IPostgresObjectMetadataProvider

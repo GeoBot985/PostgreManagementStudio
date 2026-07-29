@@ -157,7 +157,7 @@ public partial class QueryTabView : UserControl
         }
     }
 
-    public void ApplyConnection(ShellConnectionInfo? connection)
+    public void ApplyConnection(ShellConnectionInfo? connection, string? databaseOverride = null)
     {
         if (_document.IsExecuting) throw new InvalidOperationException("A running query retains its existing connection.");
         _restoreWorkspace?.Close();
@@ -170,7 +170,7 @@ public partial class QueryTabView : UserControl
         _monitoringWorkspace?.Close();
         if (_connection is not null) _connection.Session.StateChanged -= RecoverySession_StateChanged;
         _connection = connection;
-        if (_connection is not null) _document.Database = _connection.Database;
+        if (_connection is not null) _document.Database = databaseOverride ?? _connection.Database;
         if (_connection is not null) _connection.Session.StateChanged += RecoverySession_StateChanged;
         ApplyRecoverySnapshot(connection?.Session.Snapshot);
         DatabaseText.Text = _document.Database;

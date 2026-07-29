@@ -7,7 +7,8 @@ namespace PostgreManagementStudio.Application;
 public enum ObjectExplorerNodeKind
 {
     Database, Schema, Tables, Views, MaterializedViews, Sequences, Functions, Procedures,
-    Table, View, MaterializedView, Sequence, Function, Procedure, Column,
+    Table, View, MaterializedView, Sequence, Function, Procedure, Column, Constraint, Index, Trigger,
+    Types, EnumType, Domain, CompositeType, Extension,
 }
 
 public sealed class ObjectExplorerNode : IAsyncDisposable
@@ -28,6 +29,7 @@ public sealed class ObjectExplorerNode : IAsyncDisposable
     {
         Kind = kind;
         Name = name;
+        RawName = identity.NameSnapshot;
         QualifiedName = qualifiedName;
         Identity = identity;
         HasChildren = hasChildren;
@@ -38,9 +40,11 @@ public sealed class ObjectExplorerNode : IAsyncDisposable
 
     public ObjectExplorerNodeKind Kind { get; private set; }
     public string Name { get; private set; }
+    public string RawName { get; private set; }
     public string? QualifiedName { get; private set; }
     public PostgresObjectIdentity Identity { get; }
     public bool HasChildren { get; private set; }
+    public bool CanModify { get; internal set; }
     public bool IsLoaded { get; private set; }
     public bool IsStale { get; private set; }
     public bool IsLoading => Request.State is MetadataRequestState.Queued or MetadataRequestState.Loading
@@ -59,8 +63,10 @@ public sealed class ObjectExplorerNode : IAsyncDisposable
         {
             Kind = MapKind(descriptor.Identity.ObjectClass);
             Name = descriptor.DisplayName;
+            RawName = descriptor.Name;
             QualifiedName = descriptor.QualifiedName;
             HasChildren = descriptor.HasChildren;
+            CanModify = descriptor.CanModify;
         }
     }
 
@@ -76,9 +82,11 @@ public sealed class ObjectExplorerNode : IAsyncDisposable
                 if (existing.TryGetValue(candidate.Identity, out var retained))
                 {
                     retained.Name = candidate.Name;
+                    retained.RawName = candidate.RawName;
                     retained.QualifiedName = candidate.QualifiedName;
                     retained.Kind = candidate.Kind;
                     retained.HasChildren = candidate.HasChildren;
+                    retained.CanModify = candidate.CanModify;
                     if (candidate.IsLoaded) retained.ApplyChildren(candidate.Children);
                     reconciled.Add(retained);
                 }
@@ -154,6 +162,13 @@ public sealed class ObjectExplorerNode : IAsyncDisposable
         PostgresObjectClass.Function or PostgresObjectClass.Aggregate or PostgresObjectClass.WindowFunction =>
             ObjectExplorerNodeKind.Function,
         PostgresObjectClass.Column => ObjectExplorerNodeKind.Column,
+        PostgresObjectClass.Constraint => ObjectExplorerNodeKind.Constraint,
+        PostgresObjectClass.Index => ObjectExplorerNodeKind.Index,
+        PostgresObjectClass.Trigger => ObjectExplorerNodeKind.Trigger,
+        PostgresObjectClass.EnumType => ObjectExplorerNodeKind.EnumType,
+        PostgresObjectClass.Domain => ObjectExplorerNodeKind.Domain,
+        PostgresObjectClass.CompositeType => ObjectExplorerNodeKind.CompositeType,
+        PostgresObjectClass.Extension => ObjectExplorerNodeKind.Extension,
         _ => ObjectExplorerNodeKind.Table,
     };
 }
@@ -179,6 +194,17 @@ public sealed class ObjectExplorerService : IAsyncDisposable, IDisposable
     public bool IsStale => _isStale;
     public ObjectExplorerNode? CurrentRoot => _root;
     public long DatabaseRoundTrips => Interlocked.Read(ref _databaseRoundTrips);
+
+    public bool IsCurrent(ObjectExplorerNode node, string connectionString, string database)
+    {
+        var expected = BuildContext(connectionString, database, showSystemObjects: false);
+        return !_isStale && !node.IsStale && _context is not null && _root is not null
+            && _context.ConfigurationIdentity == expected.ConfigurationIdentity
+            && string.Equals(_context.Database, expected.Database, StringComparison.Ordinal)
+            && node.Identity.ConfigurationIdentity == _context.ConfigurationIdentity
+            && node.Identity.DatabaseOid == _root.Identity.DatabaseOid
+            && node.Identity.ServerFingerprint == _root.Identity.ServerFingerprint;
+    }
 
     public async Task<ObjectExplorerNode> LoadRootAsync(
         string connectionString,
@@ -298,6 +324,9 @@ public sealed class ObjectExplorerService : IAsyncDisposable, IDisposable
             Group(parent, ObjectExplorerNodeKind.Functions, "Functions", descriptors.Where(x =>
                 x.Identity.ObjectClass is PostgresObjectClass.Function or PostgresObjectClass.Aggregate or PostgresObjectClass.WindowFunction)),
             Group(parent, ObjectExplorerNodeKind.Procedures, "Procedures", descriptors.Where(x => x.Identity.ObjectClass == PostgresObjectClass.Procedure)),
+            Group(parent, ObjectExplorerNodeKind.Types, "Types", descriptors.Where(x =>
+                x.Identity.ObjectClass is PostgresObjectClass.EnumType or PostgresObjectClass.Domain
+                    or PostgresObjectClass.CompositeType)),
         };
         return groups;
     }
@@ -344,9 +373,14 @@ public sealed class ObjectExplorerService : IAsyncDisposable, IDisposable
         return new(kind, name, null, identity, true, true, children.Select(ToNode).ToArray());
     }
 
-    private static ObjectExplorerNode ToNode(ObjectMetadataDescriptor descriptor) =>
-        new(ObjectExplorerNode.MapKind(descriptor.Identity.ObjectClass), descriptor.DisplayName,
-            descriptor.QualifiedName, descriptor.Identity, descriptor.HasChildren, !descriptor.HasChildren);
+    private static ObjectExplorerNode ToNode(ObjectMetadataDescriptor descriptor)
+    {
+        var node = new ObjectExplorerNode(ObjectExplorerNode.MapKind(descriptor.Identity.ObjectClass),
+            descriptor.DisplayName, descriptor.QualifiedName, descriptor.Identity,
+            descriptor.HasChildren, !descriptor.HasChildren);
+        node.CanModify = descriptor.CanModify;
+        return node;
+    }
 
     public ValueTask DisposeAsync()
     {

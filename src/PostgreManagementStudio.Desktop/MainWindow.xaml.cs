@@ -16,6 +16,8 @@ public partial class MainWindow : Window
 {
     private readonly QueryTabManager _tabs;
     private readonly ObjectExplorerService _objectExplorer;
+    private readonly ObjectScriptService _objectScripts;
+    private readonly IObjectActionService _objectActions;
     private readonly ApplicationSettings _settings;
     private readonly DestructiveOperationGuard _destructiveOperations;
     private readonly BackupRestoreOperationService _backupRestore;
@@ -49,6 +51,8 @@ public partial class MainWindow : Window
     public MainWindow(
         QueryTabManager tabs,
         ObjectExplorerService objectExplorer,
+        ObjectScriptService objectScripts,
+        IObjectActionService objectActions,
         DestructiveOperationGuard destructiveOperations,
         ApplicationSettings settings,
         BackupRestoreOperationService backupRestore,
@@ -74,6 +78,8 @@ public partial class MainWindow : Window
         InitializeComponent();
         _tabs = tabs;
         _objectExplorer = objectExplorer;
+        _objectScripts = objectScripts;
+        _objectActions = objectActions;
         _destructiveOperations = destructiveOperations;
         _settings = settings;
         _backupRestore = backupRestore;
@@ -203,12 +209,18 @@ public partial class MainWindow : Window
             },
             (_, e) => { e.CanExecute = canExecute(e); e.Handled = true; }));
 
-    private void AddTab(RecoverySnapshot? recoverySnapshot = null)
+    private void AddTab(RecoverySnapshot? recoverySnapshot = null, string? title = null, string? sql = null,
+        ShellConnectionInfo? scriptedConnection = null, string? targetDatabase = null)
     {
-        var connection = recoverySnapshot is null ? _defaultConnection : null;
-        var database = recoverySnapshot?.Database ?? connection?.Database ?? _settings.DefaultDatabase;
-        var doc = _tabs.Open(null, database);
+        var connection = recoverySnapshot is null ? scriptedConnection ?? _defaultConnection : null;
+        var database = recoverySnapshot?.Database ?? targetDatabase ?? connection?.Database ?? _settings.DefaultDatabase;
+        var doc = _tabs.Open(null, database, title);
         doc.ConnectionProfileId = string.Empty;
+        if (sql is not null)
+        {
+            doc.SqlText = sql;
+            doc.MarkDirty();
+        }
         doc.CommandTimeout = TimeSpan.FromSeconds(_settings.CommandTimeoutSeconds);
         doc.CancellationTimeout = TimeSpan.FromSeconds(_settings.CancellationTimeoutSeconds);
         var view = new QueryTabView(doc, _destructiveOperations, _settings, _backupRestore,
@@ -224,7 +236,7 @@ public partial class MainWindow : Window
         if (connection is not null)
         {
             TrackConnection(connection);
-            view.ApplyConnection(connection);
+            view.ApplyConnection(connection, database);
         }
         QueryTabs.Items.Add(tab);
         QueryTabs.SelectedItem = tab;
@@ -451,7 +463,7 @@ public partial class MainWindow : Window
         UpdateShellState();
     }
 
-    private void ObjectExplorerTree_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+    private void ObjectExplorerTree_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
     {
         var item = e.OriginalSource as DependencyObject;
         while (item is not null && item is not TreeViewItem)
@@ -461,6 +473,229 @@ public partial class MainWindow : Window
             treeItem.IsSelected = true;
             treeItem.Focus();
         }
+    }
+
+    private void ObjectExplorerTree_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        BuildObjectExplorerContextMenu();
+    }
+
+    private async void ObjectExplorerTree_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.F5)
+        {
+            e.Handled = true;
+            if (ObjectExplorerTree.SelectedItem is TreeViewItem { Tag: ObjectExplorerNode selectedNode })
+                await ObserveAsync(() => RefreshSelectedObjectAsync(selectedNode));
+            else
+                await ObserveAsync(RefreshObjectExplorerAsync);
+            return;
+        }
+        if (e.Key == Key.Apps || (e.Key == Key.F10 && Keyboard.Modifiers == ModifierKeys.Shift))
+        {
+            e.Handled = true;
+            BuildObjectExplorerContextMenu();
+            ObjectExplorerTree.ContextMenu!.PlacementTarget =
+                ObjectExplorerTree.SelectedItem is TreeViewItem selected ? selected : ObjectExplorerTree;
+            ObjectExplorerTree.ContextMenu.IsOpen = true;
+            return;
+        }
+        if (e.Key == Key.Enter
+            && ObjectExplorerTree.SelectedItem is TreeViewItem selectedItem)
+        {
+            e.Handled = true;
+            selectedItem.IsExpanded = !selectedItem.IsExpanded;
+            return;
+        }
+        var connected = ActiveDocument is { ConnectionString.Length: > 0 }
+            && ActiveView?.Connection?.Session.Snapshot.State == RecoveryConnectionState.Connected;
+        if (connected
+            && ObjectExplorerTree.SelectedItem is TreeViewItem { Tag: ObjectExplorerNode node }
+            && ActiveDocument is { } document
+            && _objectExplorer.IsCurrent(node, document.ConnectionString, document.Database)
+            && node.CanModify
+            && ActiveView?.Connection?.Configuration.Profile.EffectiveReadOnly != true)
+        {
+            if (e.Key == Key.F2 && _objectActions.CanRename(node.Identity.ObjectClass))
+            {
+                e.Handled = true;
+                await ObserveAsync(() => RenameObjectAsync(node));
+            }
+            else if (e.Key == Key.Delete && _objectActions.CanDelete(node.Identity.ObjectClass))
+            {
+                e.Handled = true;
+                await ObserveAsync(() => DeleteObjectAsync(node));
+            }
+        }
+    }
+
+    private void BuildObjectExplorerContextMenu()
+    {
+        var menu = ObjectExplorerTree.ContextMenu!;
+        menu.Items.Clear();
+        if (ObjectExplorerTree.SelectedItem is not TreeViewItem { Tag: ObjectExplorerNode node }) return;
+        var sessionConnected = ActiveDocument is { ConnectionString.Length: > 0 }
+            && ActiveView?.Connection?.Session.Snapshot.State == RecoveryConnectionState.Connected;
+        var connected = sessionConnected && ActiveDocument is { } currentDocument
+            && _objectExplorer.IsCurrent(node, currentDocument.ConnectionString, currentDocument.Database);
+
+        menu.Items.Add(Item("New Query", (_, _) => AddTab(
+            scriptedConnection: ActiveView?.Connection, targetDatabase: ActiveDocument?.Database), sessionConnected));
+        var scripts = new MenuItem { Header = "Script Object as" };
+        foreach (var kind in Enum.GetValues<ObjectScriptKind>())
+        {
+            if (!ObjectScriptService.Supports(node.Identity.ObjectClass, kind)) continue;
+            var label = kind switch
+            {
+                ObjectScriptKind.DropAndCreate => "DROP and CREATE To",
+                _ => $"{kind.ToString().ToUpperInvariant()} To",
+            };
+            scripts.Items.Add(Item($"{label} → New Query Editor Window",
+                (_, _) => _ = ObserveAsync(() => GenerateObjectScriptAsync(node, kind)), connected));
+        }
+        scripts.IsEnabled = scripts.Items.Count > 0 && connected;
+        menu.Items.Add(scripts);
+        if (ObjectScriptService.Supports(node.Identity.ObjectClass, ObjectScriptKind.Select))
+            menu.Items.Add(Item($"Select Top {_settings.DisplayedRowLimit} Rows",
+                (_, _) => _ = ObserveAsync(() => GenerateObjectScriptAsync(node, ObjectScriptKind.Select)), connected));
+        menu.Items.Add(new Separator());
+        menu.Items.Add(Item("Properties", (_, _) => _ = ObserveAsync(() => ShowObjectPropertiesAsync(node)),
+            connected && ObjectScriptService.SupportsMetadata(node.Identity.ObjectClass)));
+        menu.Items.Add(Item("Refresh", (_, _) => _ = ObserveAsync(() => RefreshSelectedObjectAsync(node)), connected));
+        var readOnly = ActiveView?.Connection?.Configuration.Profile.EffectiveReadOnly == true;
+        if (_objectActions.CanRename(node.Identity.ObjectClass))
+            menu.Items.Add(Item("Rename", (_, _) => _ = ObserveAsync(() => RenameObjectAsync(node)),
+                connected && node.CanModify && !readOnly));
+        if (_objectActions.CanDelete(node.Identity.ObjectClass))
+            menu.Items.Add(Item("Delete", (_, _) => _ = ObserveAsync(() => DeleteObjectAsync(node)),
+                connected && node.CanModify && !readOnly));
+        menu.Items.Add(new Separator());
+        menu.Items.Add(Item("Copy Name", (_, _) => Clipboard.SetText(node.RawName), connected));
+        menu.Items.Add(Item("Copy Qualified Name", (_, _) =>
+            Clipboard.SetText(node.QualifiedName ?? node.RawName), connected && !string.IsNullOrWhiteSpace(node.QualifiedName)));
+    }
+
+    private static MenuItem Item(string header, RoutedEventHandler handler, bool enabled)
+    {
+        var item = new MenuItem { Header = header, IsEnabled = enabled };
+        item.Click += handler;
+        return item;
+    }
+
+    private async Task GenerateObjectScriptAsync(ObjectExplorerNode node, ObjectScriptKind kind)
+    {
+        var document = RequireCurrentObjectExplorerNode(node);
+        var connection = ActiveView?.Connection ?? throw new InvalidOperationException("The selected connection is unavailable.");
+        var sql = await _objectScripts.GenerateAsync(document.ConnectionString, document.Database, node.Identity,
+            kind, _settings.DisplayedRowLimit, _metadataCancellation?.Token ?? default);
+        AddTab(title: $"{kind} {node.QualifiedName ?? node.RawName}", sql: sql,
+            scriptedConnection: connection, targetDatabase: document.Database);
+    }
+
+    private async Task ShowObjectPropertiesAsync(ObjectExplorerNode node)
+    {
+        var document = RequireCurrentObjectExplorerNode(node);
+        var metadata = await _objectScripts.LoadMetadataAsync(
+            document.ConnectionString, document.Database, node.Identity,
+            _metadataCancellation?.Token ?? default);
+        var definition = string.IsNullOrWhiteSpace(metadata.CanonicalCreate)
+            ? "Definition is not available for this object type."
+            : metadata.CanonicalCreate;
+        MessageBox.Show(this,
+            $"Name: {metadata.Name}\nSchema: {metadata.Schema}\nQualified name: {metadata.QualifiedName}"
+            + $"\nType: {node.Kind}\nOID: {node.Identity.ObjectOid}"
+            + $"\nColumns: {metadata.Columns.Count}\nConstraints: {metadata.Constraints.Count}"
+            + $"\nIndexes: {metadata.Indexes.Count}\nTriggers: {metadata.Triggers.Count}"
+            + $"\nOwner: {metadata.Owner ?? "—"}"
+            + $"\nEstimated rows: {metadata.EstimatedRows?.ToString("N0") ?? "—"}"
+            + $"\nSize: {(metadata.SizeBytes is null ? "—" : $"{metadata.SizeBytes:N0} bytes")}"
+            + $"\nPrivileges: {metadata.Privileges ?? "—"}"
+            + $"\nComment: {metadata.Comment ?? "—"}\n\nDefinition\n{definition}",
+            $"{node.Name} properties", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private async Task RefreshSelectedObjectAsync(ObjectExplorerNode node)
+    {
+        if (node.Identity.ObjectClass == PostgresObjectClass.Unknown || node.Kind == ObjectExplorerNodeKind.Database)
+        {
+            await RefreshObjectExplorerAsync();
+            return;
+        }
+        await _objectExplorer.ExpandAsync(node, refresh: true,
+            cancellationToken: _metadataCancellation?.Token ?? default);
+        if (ObjectExplorerTree.SelectedItem is TreeViewItem item) Populate(item, node);
+    }
+
+    private async Task RenameObjectAsync(ObjectExplorerNode node)
+    {
+        var document = RequireCurrentObjectExplorerNode(node, requireWritable: true);
+        var newName = PromptForIdentifier($"Rename {node.Kind}", node.RawName);
+        if (newName is null) return;
+        if (MessageBox.Show(this,
+                $"Rename {node.Kind} {node.QualifiedName ?? node.RawName} to {newName}?",
+                "Confirm rename", MessageBoxButton.OKCancel, MessageBoxImage.Warning,
+                MessageBoxResult.Cancel) != MessageBoxResult.OK) return;
+        document = RequireCurrentObjectExplorerNode(node, requireWritable: true);
+        await _objectActions.RenameAsync(document.ConnectionString, document.Database, node.Identity, newName,
+            readOnly: false, _metadataCancellation?.Token ?? default);
+        await RefreshObjectExplorerAsync();
+    }
+
+    private async Task DeleteObjectAsync(ObjectExplorerNode node)
+    {
+        var document = RequireCurrentObjectExplorerNode(node, requireWritable: true);
+        var drop = await _objectScripts.GenerateAsync(document.ConnectionString, document.Database, node.Identity,
+            ObjectScriptKind.Drop, cancellationToken: _metadataCancellation?.Token ?? default);
+        if (MessageBox.Show(this,
+                $"Delete {node.Kind} {node.QualifiedName ?? node.RawName}?\n\n{drop}\n\nDependencies are restricted; CASCADE is not used.",
+                "Confirm delete", MessageBoxButton.OKCancel, MessageBoxImage.Warning,
+                MessageBoxResult.Cancel) != MessageBoxResult.OK) return;
+        document = RequireCurrentObjectExplorerNode(node, requireWritable: true);
+        await _objectActions.DeleteAsync(document.ConnectionString, document.Database, node.Identity,
+            readOnly: false, _metadataCancellation?.Token ?? default);
+        await RefreshObjectExplorerAsync();
+    }
+
+    private QueryDocument RequireCurrentObjectExplorerNode(ObjectExplorerNode node, bool requireWritable = false)
+    {
+        var document = ActiveDocument ?? throw new InvalidOperationException("Open a connected query first.");
+        if (ActiveView?.Connection?.Session.Snapshot.State != RecoveryConnectionState.Connected)
+            throw new InvalidOperationException("Reconnect before using Object Explorer actions.");
+        if (!_objectExplorer.IsCurrent(node, document.ConnectionString, document.Database))
+            throw new InvalidOperationException(
+                "The selected Object Explorer node is stale or belongs to another database. Refresh before continuing.");
+        if (requireWritable && ActiveView.Connection.Configuration.Profile.EffectiveReadOnly)
+            throw new InvalidOperationException("This action is disabled for a read-only connection.");
+        if (requireWritable && !node.CanModify)
+            throw new InvalidOperationException(
+                "The active role does not own this object and cannot modify it.");
+        return document;
+    }
+
+    private string? PromptForIdentifier(string title, string currentName)
+    {
+        var box = new TextBox { Text = currentName, MinWidth = 320, Margin = new Thickness(12) };
+        box.SelectAll();
+        var ok = new Button { Content = "Rename", IsDefault = true, MinWidth = 80, Margin = new Thickness(4) };
+        var cancel = new Button { Content = "Cancel", IsCancel = true, MinWidth = 80, Margin = new Thickness(4) };
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        buttons.Children.Add(ok); buttons.Children.Add(cancel);
+        var panel = new StackPanel(); panel.Children.Add(box); panel.Children.Add(buttons);
+        var dialog = new Window
+        {
+            Title = title, Owner = this, Content = panel, SizeToContent = SizeToContent.WidthAndHeight,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner, ResizeMode = ResizeMode.NoResize,
+        };
+        ok.Click += (_, _) =>
+        {
+            if (string.IsNullOrWhiteSpace(box.Text))
+            {
+                MessageBox.Show(dialog, "The object name cannot be empty.", title, MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            dialog.DialogResult = true;
+        };
+        return dialog.ShowDialog() == true ? box.Text.Trim() : null;
     }
 
     private async Task RefreshObjectExplorerAsync()

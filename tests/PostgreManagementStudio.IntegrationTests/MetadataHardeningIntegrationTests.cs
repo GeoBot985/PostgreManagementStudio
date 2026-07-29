@@ -36,13 +36,16 @@ public sealed class MetadataHardeningIntegrationTests
         Assert.Equal(table.Identity, searchResult.Identity);
         var columns = await provider.LoadChildrenAsync(visibleContext, table.Identity);
         Assert.NotEmpty(columns.Objects);
-        Assert.Equal(columns.Objects.Select(x => x.Ordinal).Order(), columns.Objects.Select(x => x.Ordinal));
-        Assert.All(columns.Objects, x =>
+        var columnObjects = columns.Objects.Where(x => x.Identity.ObjectClass == PostgresObjectClass.Column).ToArray();
+        Assert.Equal(columnObjects.Select(x => x.Ordinal).Order(), columnObjects.Select(x => x.Ordinal));
+        Assert.All(columnObjects, x =>
         {
             Assert.Equal(PostgresObjectClass.Column, x.Identity.ObjectClass);
             Assert.Equal(table.Identity.ObjectOid, x.Identity.ObjectOid);
             Assert.NotNull(x.Identity.SubObjectNumber);
         });
+        Assert.Contains(columns.Objects, x => x.Identity.ObjectClass == PostgresObjectClass.Constraint);
+        Assert.Contains(columns.Objects, x => x.Identity.ObjectClass == PostgresObjectClass.Index);
 
         var allRoot = await provider.LoadRootAsync(visibleContext with { ShowSystemObjects = true });
         Assert.Contains(allRoot.Schemas, x => x.Name == "pg_catalog"

@@ -70,3 +70,11 @@ The current source-of-truth description is the reachability matrix plus the
 release-scope reset. Future sprint reports may retain historical status, but
 must use “service-only”, “temporary UI”, “partial”, “end-to-end reachable”, or
 “release quality” explicitly and must not infer UI completion from tests alone.
+
+## Sprint 58 reconciliation
+
+Object scripting is no longer a service-only or absent claim in the source
+tree. The supported Object Explorer workflow is composed end to end and its
+known DDL/property boundaries are explicit in
+`docs/features/object-explorer-scripting.md`. This does not alter the contents
+or claims of the frozen Sprint 57 `0.9.0-rc.3` package.

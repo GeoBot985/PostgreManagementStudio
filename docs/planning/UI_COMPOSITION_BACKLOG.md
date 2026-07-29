@@ -117,3 +117,17 @@ finish one usable surface rather than expose another collection of buttons.
 - Before any new feature sprint, complete signing/scanning/licensing, clean
   Windows/DPI acceptance, stateful upgrade recovery, and any desired PostgreSQL
   compatibility expansion.
+
+## Sprint 58 — Object Explorer scripting and context actions
+
+- Completed: node-specific context menus, keyboard routing, PostgreSQL
+  CREATE/DROP/DML generation, connected query-tab composition, properties,
+  refresh/copy, and confirmed rename/delete.
+- Metadata composition: relation children now expose constraints, indexes and
+  triggers; schemas expose enum/domain/composite types; extensions are visible
+  at database scope.
+- Deferred: complete ownership/grant and row-security scripting, identity
+  sequence options, and a richer editable object-properties workspace.
+- Acceptance: supported scope is end-to-end reachable; see
+  `docs/sprints/SPRINT_58_REPORT.md`.
+- Release note: source is newer than the frozen Sprint 57 package.

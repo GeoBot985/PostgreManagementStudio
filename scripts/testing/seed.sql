@@ -51,12 +51,19 @@ CREATE TABLE "PMS Regression"."Child Table" (
 CREATE INDEX "Index With Space" ON "PMS Regression"."Child Table"(parent_id);
 CREATE VIEW "PMS Regression"."Order" AS SELECT id, unicode_text FROM "PMS Regression"."Type Matrix";
 CREATE MATERIALIZED VIEW "PMS Regression"."Materialized Résumé" AS SELECT count(*) AS row_count FROM "PMS Regression"."Type Matrix";
+CREATE MATERIALIZED VIEW "PMS Regression"."Materialized Empty" AS SELECT count(*) AS row_count FROM "PMS Regression"."Type Matrix" WITH NO DATA;
 CREATE SEQUENCE "PMS Regression"."Mixed Case Sequence";
 CREATE TYPE "PMS Regression"."Status Type" AS ENUM ('new', 'done');
 CREATE FUNCTION "PMS Regression"."Function With Space"(value integer) RETURNS integer LANGUAGE sql IMMUTABLE AS $$ SELECT value + 1 $$;
 CREATE PROCEDURE "PMS Regression"."Procedure With Space"() LANGUAGE plpgsql AS $$ BEGIN NULL; END $$;
 CREATE TABLE "PMS Regression"."Partitioned Table" (id integer, created_on date) PARTITION BY RANGE (created_on);
 CREATE TABLE "PMS Regression"."Partition 2024" PARTITION OF "PMS Regression"."Partitioned Table" FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+CREATE INDEX "Partitioned Parent Index" ON "PMS Regression"."Partitioned Table"(id);
+CREATE FUNCTION "PMS Regression".pms_partition_trigger() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;
+CREATE TRIGGER pms_partition_trigger BEFORE INSERT ON "PMS Regression"."Partitioned Table"
+    FOR EACH ROW EXECUTE FUNCTION "PMS Regression".pms_partition_trigger();
+CREATE TABLE "PMS Regression"."Inherited Parent" (inherited_id integer NOT NULL);
+CREATE TABLE "PMS Regression"."Inherited Child" (local_value text) INHERITS ("PMS Regression"."Inherited Parent");
 
 GRANT CONNECT ON DATABASE :"test_database" TO :"readonly_role", :"restricted_role";
 GRANT USAGE ON SCHEMA "PMS Regression" TO :"readonly_role";

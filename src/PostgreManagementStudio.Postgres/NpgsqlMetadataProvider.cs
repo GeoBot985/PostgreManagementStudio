@@ -45,7 +45,8 @@ public sealed class NpgsqlMetadataProvider(INpgsqlConnectionFactory? connectionF
                        SELECT 1 FROM pg_depend d
                        WHERE d.classid = 'pg_namespace'::regclass
                          AND d.objid = n.oid
-                         AND d.deptype = 'e')
+                         AND d.deptype = 'e'),
+                   pg_has_role(n.nspowner, 'USAGE')
             FROM pg_namespace n
             WHERE has_schema_privilege(n.oid, 'USAGE')
                OR pg_has_role(n.nspowner, 'USAGE')
@@ -63,7 +64,26 @@ public sealed class NpgsqlMetadataProvider(INpgsqlConnectionFactory? connectionF
                 schemas.Add(new(
                     Identity(context, serverFingerprint, databaseOid, oid, PostgresObjectClass.Schema, name,
                         schemaOid: oid, parentOid: databaseOid),
-                    name, name, name, PostgreSqlIdentifierQuoter.Quote(name), classification, true));
+                    name, name, name, PostgreSqlIdentifierQuoter.Quote(name), classification, true,
+                    CanModify: reader.GetBoolean(3)));
+            }
+        }
+
+        await using (var command = new NpgsqlCommand("""
+            SELECT e.oid::bigint,e.extname,e.extnamespace::bigint,
+                   pg_has_role(e.extowner,'USAGE')
+            FROM pg_extension e ORDER BY e.extname COLLATE "C",e.oid
+            """, connection))
+        await using (var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                var oid=checked((uint)reader.GetInt64(0)); var name=reader.GetString(1);
+                schemas.Add(new(
+                    Identity(context,serverFingerprint,databaseOid,oid,PostgresObjectClass.Extension,name,
+                        parentOid:databaseOid,schemaOid:checked((uint)reader.GetInt64(2))),
+                    name,null,$"Extension: {name}",PostgreSqlIdentifierQuoter.Quote(name),
+                    MetadataSystemClassification.ExtensionOwned,false, CanModify: reader.GetBoolean(3)));
             }
         }
 
@@ -83,7 +103,7 @@ public sealed class NpgsqlMetadataProvider(INpgsqlConnectionFactory? connectionF
             PostgresObjectClass.Schema => await LoadSchemaChildrenAsync(connection, context, parent, cancellationToken).ConfigureAwait(false),
             PostgresObjectClass.Table or PostgresObjectClass.PartitionedTable or PostgresObjectClass.Partition
                 or PostgresObjectClass.View or PostgresObjectClass.MaterializedView or PostgresObjectClass.ForeignTable =>
-                await LoadColumnsAsync(connection, context, parent, cancellationToken).ConfigureAwait(false),
+                await LoadRelationChildrenAsync(connection, context, parent, cancellationToken).ConfigureAwait(false),
             _ => new(parent, Array.Empty<ObjectMetadataDescriptor>(), DateTimeOffset.UtcNow),
         };
     }
@@ -204,7 +224,7 @@ public sealed class NpgsqlMetadataProvider(INpgsqlConnectionFactory? connectionF
         var objects = new List<ObjectMetadataDescriptor>();
         await using (var command = new NpgsqlCommand("""
             SELECT c.oid::bigint, c.relname, c.relkind, c.relispartition,
-                   e.oid::bigint
+                   e.oid::bigint, pg_has_role(c.relowner,'USAGE')
             FROM pg_class c
             LEFT JOIN pg_depend d
               ON d.classid = 'pg_class'::regclass
@@ -246,14 +266,14 @@ public sealed class NpgsqlMetadataProvider(INpgsqlConnectionFactory? connectionF
                     name, parent.NameSnapshot, name,
                     PostgreSqlIdentifierQuoter.Qualified(parent.NameSnapshot, name),
                     classification, objectClass is not PostgresObjectClass.Sequence,
-                    ExtensionOid: extensionOid));
+                    ExtensionOid: extensionOid, CanModify: reader.GetBoolean(5)));
             }
         }
 
         await using (var command = new NpgsqlCommand("""
             SELECT p.oid::bigint, p.proname, p.prokind,
                    pg_get_function_identity_arguments(p.oid),
-                   e.oid::bigint
+                   e.oid::bigint, pg_has_role(p.proowner,'USAGE')
             FROM pg_proc p
             LEFT JOIN pg_depend d
               ON d.classid = 'pg_proc'::regclass
@@ -287,7 +307,39 @@ public sealed class NpgsqlMetadataProvider(INpgsqlConnectionFactory? connectionF
                     Identity(context, parent.ServerFingerprint, parent.DatabaseOid, oid, objectClass, name,
                         parent.ObjectOid, parent.ObjectOid),
                     name, parent.NameSnapshot, $"{name}({signature})", $"{quoted}({signature})",
-                    classification, false, signature, extensionOid));
+                    classification, false, signature, extensionOid, CanModify: reader.GetBoolean(5)));
+            }
+        }
+
+        await using (var command = new NpgsqlCommand("""
+            SELECT t.oid::bigint,t.typname,t.typtype,pg_has_role(t.typowner,'USAGE')
+            FROM pg_type t
+            WHERE t.typnamespace=@schema_oid
+              AND t.typtype IN ('e','d','c')
+              AND (t.typtype <> 'c' OR NOT EXISTS
+                   (SELECT 1 FROM pg_class c WHERE c.reltype=t.oid AND c.relkind IN ('r','p','v','m','f')))
+            ORDER BY t.typname COLLATE "C",t.oid
+            """, connection))
+        {
+            command.Parameters.AddWithValue("schema_oid", (long)parent.ObjectOid);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                var oid = checked((uint)reader.GetInt64(0));
+                var name = reader.GetString(1);
+                var objectClass = reader.GetChar(2) switch
+                {
+                    'e' => PostgresObjectClass.EnumType,
+                    'd' => PostgresObjectClass.Domain,
+                    _ => PostgresObjectClass.CompositeType,
+                };
+                objects.Add(new(
+                    Identity(context, parent.ServerFingerprint, parent.DatabaseOid, oid, objectClass, name,
+                        parent.ObjectOid, parent.ObjectOid),
+                    name, parent.NameSnapshot, name,
+                    PostgreSqlIdentifierQuoter.Qualified(parent.NameSnapshot, name),
+                    ObjectMetadataRules.ClassifySchema(parent.NameSnapshot), false,
+                    CanModify: reader.GetBoolean(3)));
             }
         }
 
@@ -296,13 +348,25 @@ public sealed class NpgsqlMetadataProvider(INpgsqlConnectionFactory? connectionF
         return new(parent, ObjectMetadataRules.Filter(objects, context.ShowSystemObjects), DateTimeOffset.UtcNow);
     }
 
-    private static async Task<ObjectMetadataBatch> LoadColumnsAsync(
+    private static async Task<ObjectMetadataBatch> LoadRelationChildrenAsync(
         NpgsqlConnection connection,
         ObjectMetadataContext context,
         PostgresObjectIdentity parent,
         CancellationToken cancellationToken)
     {
         var columns = new List<ObjectMetadataDescriptor>();
+        string relationQualifiedName;
+        await using (var relationCommand = new NpgsqlCommand("""
+            SELECT quote_ident(n.nspname)||'.'||quote_ident(c.relname)
+            FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+            WHERE c.oid=@relation_oid
+            """, connection))
+        {
+            relationCommand.Parameters.AddWithValue("relation_oid", (long)parent.ObjectOid);
+            relationQualifiedName = (string?)await relationCommand.ExecuteScalarAsync(cancellationToken)
+                .ConfigureAwait(false)
+                ?? throw new MetadataObjectNotFoundException("The relation changed while metadata was loading.");
+        }
         await using var command = new NpgsqlCommand("""
             SELECT a.attname, format_type(a.atttypid, a.atttypmod),
                    a.attnum, NOT a.attnotnull
@@ -324,7 +388,7 @@ public sealed class NpgsqlMetadataProvider(INpgsqlConnectionFactory? connectionF
                 Identity(context, parent.ServerFingerprint, parent.DatabaseOid, parent.ObjectOid,
                     PostgresObjectClass.Column, name, parent.ObjectOid, parent.SchemaOid, ordinal),
                 name, parent.NameSnapshot, name,
-                parent.NameSnapshot + "." + PostgreSqlIdentifierQuoter.Quote(name),
+                relationQualifiedName + "." + PostgreSqlIdentifierQuoter.Quote(name),
                 MetadataSystemClassification.User, false, dataType, Ordinal: ordinal,
                 ExtensionOid: null));
             if (nullable)
@@ -332,9 +396,46 @@ public sealed class NpgsqlMetadataProvider(INpgsqlConnectionFactory? connectionF
             else
                 columns[^1] = columns[^1] with { DisplayName = $"{name} — {dataType}" };
         }
+        await reader.DisposeAsync().ConfigureAwait(false);
+        await AddRelationObjectsAsync(connection, context, parent, columns,
+            "SELECT x.oid::bigint,x.conname,pg_get_constraintdef(x.oid,true),pg_has_role(c.relowner,'USAGE') FROM pg_constraint x JOIN pg_class c ON c.oid=x.conrelid WHERE x.conrelid=@relation_oid ORDER BY x.conname",
+            PostgresObjectClass.Constraint, relationQualifiedName, cancellationToken).ConfigureAwait(false);
+        await AddRelationObjectsAsync(connection, context, parent, columns,
+            "SELECT c.oid::bigint,c.relname,pg_get_indexdef(c.oid),pg_has_role(c.relowner,'USAGE') FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid WHERE i.indrelid=@relation_oid ORDER BY c.relname",
+            PostgresObjectClass.Index, relationQualifiedName, cancellationToken).ConfigureAwait(false);
+        await AddRelationObjectsAsync(connection, context, parent, columns,
+            "SELECT t.oid::bigint,t.tgname,pg_get_triggerdef(t.oid,true),pg_has_role(c.relowner,'USAGE') FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE t.tgrelid=@relation_oid AND NOT t.tgisinternal ORDER BY t.tgname",
+            PostgresObjectClass.Trigger, relationQualifiedName, cancellationToken).ConfigureAwait(false);
         if (columns.Count == 0 && !await ExistsAsync(connection, "pg_class", parent.ObjectOid, cancellationToken).ConfigureAwait(false))
             throw new MetadataObjectNotFoundException("The relation changed while metadata was loading.");
         return new(parent, ObjectMetadataRules.Sort(columns), DateTimeOffset.UtcNow);
+    }
+
+    private static async Task AddRelationObjectsAsync(
+        NpgsqlConnection connection,
+        ObjectMetadataContext context,
+        PostgresObjectIdentity parent,
+        List<ObjectMetadataDescriptor> values,
+        string sql,
+        PostgresObjectClass objectClass,
+        string relationQualifiedName,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("relation_oid", (long)parent.ObjectOid);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var oid = checked((uint)reader.GetInt64(0));
+            var name = reader.GetString(1);
+            values.Add(new(
+                Identity(context, parent.ServerFingerprint, parent.DatabaseOid, oid, objectClass, name,
+                    parent.ObjectOid, parent.SchemaOid),
+                name, parent.NameSnapshot, $"{name} — {objectClass}",
+                relationQualifiedName + "." + PostgreSqlIdentifierQuoter.Quote(name),
+                MetadataSystemClassification.User, false, reader.GetString(2),
+                CanModify: reader.GetBoolean(3)));
+        }
     }
 
     private async Task<NpgsqlConnection> OpenAsync(ObjectMetadataContext context, CancellationToken cancellationToken)

@@ -1,11 +1,10 @@
 # PostgreManagementStudio
 
-Windows-only WPF PostgreSQL management application. The project is in release
-hardening after Sprints 1-33. The service and domain layers cover query
-execution, result handling, administration, monitoring, schema comparison,
-performance analysis, and index analysis. The current desktop host exposes a
-smaller prototype subset; see
-`docs/hardening/034-feature-traceability.md` for the audited reachability status.
+Windows-only WPF PostgreSQL management application. The desktop host composes
+query editing/execution, results/export, Object Explorer browsing and scripting,
+backup/restore, data transfer, schema/index analysis, and operational
+monitoring. The exact audited scope and explicit boundaries are tracked in
+`docs/audits/UI_REACHABILITY_MATRIX.md`.
 
 ## Prerequisites
 
@@ -93,3 +92,6 @@ licence gates remain open.
 Sprint 57 froze the internal candidate at package SHA-256
 `e6244a56b6a654123cd3ae7a7318e2bc28e978b35981b709f0149a564d8829aa`.
 Its explicit decision and conditions are in `docs/release/FINAL_RELEASE_DECISION.md`.
+Sprint 58 source changes are newer than that frozen package; Object Explorer
+scripting is documented in `docs/features/object-explorer-scripting.md` and
+requires a new package qualification before it becomes a release claim.

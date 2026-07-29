@@ -8,6 +8,7 @@ using System.Windows.Input;
 using System.Windows.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using PostgreManagementStudio.Application;
+using PostgreManagementStudio.Core;
 using PostgreManagementStudio.Postgres;
 using PostgreManagementStudio.Results;
 
@@ -367,6 +368,74 @@ public sealed class ShellWorkflowTests
             .ToArray();
 
         Assert.Empty(gestures);
+    }
+
+    [Fact]
+    [Trait("Category", "UiIntegration")]
+    public void Sprint58_ObjectExplorerContextMenuIsTraditionalTypeAwareAndDisconnectedSafe()
+    {
+        RunSta((window, _) =>
+        {
+            var identity = new PostgresObjectIdentity
+            {
+                ConnectionProfileId = "test", ConfigurationIdentity = "config", ServerFingerprint = "server",
+                DatabaseOid = 1, ObjectOid = 2, ObjectClass = PostgresObjectClass.Table, NameSnapshot = "orders",
+            };
+            var constructor = typeof(ObjectExplorerNode).GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic).Single();
+            var node = (ObjectExplorerNode)constructor.Invoke([
+                ObjectExplorerNodeKind.Table, "orders", "\"public\".\"orders\"", identity,
+                true, false, null, null
+            ]);
+            var tree = Assert.IsType<TreeView>(window.FindName("ObjectExplorerTree"));
+            var prior = new TreeViewItem { Header = "prior", Tag = node, IsSelected = true };
+            tree.Items.Add(prior);
+            var item = new TreeViewItem { Header = "orders", Tag = node };
+            tree.Items.Add(item);
+            window.Show();
+            window.UpdateLayout();
+            var rightClick = new MouseButtonEventArgs(Mouse.PrimaryDevice, 0, MouseButton.Right)
+            {
+                RoutedEvent = UIElement.PreviewMouseRightButtonDownEvent,
+                Source = item,
+            };
+            typeof(MainWindow).GetMethod("ObjectExplorerTree_PreviewMouseRightButtonDown",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(window, [tree, rightClick]);
+            Assert.True(item.IsSelected);
+            Assert.False(prior.IsSelected);
+            typeof(MainWindow).GetMethod("BuildObjectExplorerContextMenu", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(window, null);
+            var menu = Assert.IsType<ContextMenu>(tree.ContextMenu);
+            Assert.Contains(menu.Items.OfType<MenuItem>(), x => Equals(x.Header, "Script Object as"));
+            Assert.Contains(menu.Items.OfType<MenuItem>(), x => x.Header?.ToString()?.StartsWith("Select Top") == true);
+            Assert.Contains(menu.Items.OfType<MenuItem>(), x => Equals(x.Header, "Copy Qualified Name"));
+            Assert.False(menu.Items.OfType<MenuItem>().Single(x => Equals(x.Header, "Script Object as")).IsEnabled);
+        });
+    }
+
+    [Fact]
+    [Trait("Category", "UiIntegration")]
+    public void Sprint58_GeneratedTabPreservesSelectedDatabaseAndUnsavedScript()
+    {
+        RunSta((window, provider) =>
+        {
+            var parse = typeof(MainWindow).GetMethod("ParseConnection",
+                BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var connection = Assert.IsType<ShellConnectionInfo>(parse.Invoke(window,
+            [
+                "Host=localhost;Port=5432;Database=profile_database;Username=test;Password=test",
+                true,
+            ]));
+            typeof(MainWindow).GetMethod("AddTab", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(window, [null, "Create public.orders", "CREATE TABLE public.orders(id integer);",
+                    connection, "selected_database"]);
+
+            var document = provider.GetRequiredService<QueryTabManager>().Documents.Last();
+            Assert.Equal("selected_database", document.Database);
+            Assert.Equal("CREATE TABLE public.orders(id integer);", document.SqlText);
+            Assert.True(document.IsDirty);
+            document.MarkDirty(false);
+        });
     }
 
     private static void RunSta(

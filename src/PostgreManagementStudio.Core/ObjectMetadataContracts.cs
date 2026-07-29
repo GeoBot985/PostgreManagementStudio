@@ -7,7 +7,7 @@ public enum PostgresObjectClass
 {
     Database, Schema, Table, PartitionedTable, Partition, View, MaterializedView,
     Sequence, ForeignTable, Index, Function, Procedure, Aggregate, WindowFunction,
-    Column, Unknown,
+    Column, Constraint, Trigger, EnumType, Domain, CompositeType, Extension, Unknown,
 }
 
 public enum MetadataSystemClassification
@@ -69,7 +69,8 @@ public sealed record ObjectMetadataDescriptor(
     bool HasChildren,
     string? RoutineSignature = null,
     uint? ExtensionOid = null,
-    int? Ordinal = null);
+    int? Ordinal = null,
+    bool CanModify = false);
 
 public sealed record ObjectMetadataBatch(
     PostgresObjectIdentity ParentIdentity,

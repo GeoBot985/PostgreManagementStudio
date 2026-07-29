@@ -7,7 +7,7 @@ administration coverage that is not composed into the desktop.
 | Feature area | Decision | Current state | User value | Dependency | Complexity | Principal risk | Order |
 |---|---|---|---|---|---|---|---:|
 | Connection management | KEEP_FOR_CURRENT_RELEASE | END_TO_END_REACHABLE | Establishes the trusted PostgreSQL session used by every supported workflow | Provider, recovery, profile store | medium | Remote/authentication/version scope is narrower than a general-purpose client | 1 |
-| Object Explorer | KEEP_FOR_CURRENT_RELEASE | END_TO_END_REACHABLE | Provides familiar database orientation and lazy metadata browsing | Metadata provider and shell | medium | No object designers or object actions | 2 |
+| Object Explorer | KEEP_FOR_CURRENT_RELEASE | END_TO_END_REACHABLE | Provides familiar database orientation, lazy metadata browsing, scripts, and safe context actions | Metadata, scripting/action services and shell | medium | Advanced object designers and some complete DDL attributes remain deferred | 2 |
 | SQL editor and files | KEEP_FOR_CURRENT_RELEASE | END_TO_END_REACHABLE | Core query-authoring workflow | Query document, file service, recovery | medium | Basic editor lacks a full completion/editor surface | 3 |
 | Query execution/cancellation | KEEP_FOR_CURRENT_RELEASE | END_TO_END_REACHABLE | Primary reliable database interaction | Query executor, lifecycle, recovery | medium | Concurrency and cancellation regressions | 4 |
 | Results/export | KEEP_FOR_CURRENT_RELEASE | END_TO_END_REACHABLE | Makes query output useful and portable | Result store, serializers, paging | medium | Output is compact and not editable | 5 |
@@ -24,7 +24,7 @@ administration coverage that is not composed into the desktop.
 | Query performance dashboard/history | DEFER_TO_LATER_RELEASE | SERVICE_ONLY | Find regressions and expensive queries | Performance models and `pg_stat_statements` | large | Extension availability and interpretation | 16 |
 | Index analysis/recommendations | KEEP_FOR_CURRENT_RELEASE | END_TO_END_REACHABLE | Inspect and safely review access paths | Index metadata, analysis, maintenance and destructive guard | large | Create/drop/editor actions and object-level targeting remain deferred | 17 |
 | Schema compare/synchronisation | KEEP_FOR_CURRENT_RELEASE | END_TO_END_REACHABLE | Review and export schema differences safely | Extractor, comparison, planner and preview | large | Direct execution, dependency extraction and snapshot sources remain deferred | 18 |
-| Object scripting | REMOVE_FROM_UI_AND_CLAIMS | NOT_IMPLEMENTED | Useful only after a safe object-specific workflow exists | Requires new scripting composition | large | Claiming support without implementation | — |
+| Object scripting | KEEP_FOR_CURRENT_RELEASE | END_TO_END_REACHABLE | Generates reviewable PostgreSQL DDL/DML and provides safe object actions | Object metadata, scripting/action services, query documents | large | Unsupported advanced DDL attributes must remain explicit and must not be represented as complete | 19 |
 | SQL IntelliSense | DEFER_TO_LATER_RELEASE | SERVICE_ONLY | Faster and safer query authoring | Completion engine plus visible editor control | medium | Incorrect/stale metadata suggestions | 19 |
 | Query history | DEFER_TO_LATER_RELEASE | SERVICE_ONLY | Reuse prior work safely | Recent-files/history persistence | medium | Sensitive SQL retention and recovery semantics | 20 |
 | Diagnostics | KEEP_FOR_CURRENT_RELEASE | END_TO_END_REACHABLE for activity snapshots; Help > Diagnostics remains temporary | Supportability and safe failure investigation | Redaction/diagnostic services | small | Full support bundle and query/database sections remain deferred | 21 |
@@ -46,3 +46,10 @@ recommendations, or visual plan analysis.
 This scope is approved only for the frozen internal RC identified in
 `docs/release/FINAL_RC_CANDIDATE.md`. It remains unchanged pending clean-Windows
 and stateful-upgrade qualification; no deferred feature is restored to scope.
+
+## Sprint 58 scope change
+
+The source tree now includes Object Explorer scripting and context actions for
+the supported scope in `docs/features/object-explorer-scripting.md`. The frozen
+Sprint 57 `0.9.0-rc.3` package predates this change. A new package and release
+qualification are required before release claims may include Sprint 58.
