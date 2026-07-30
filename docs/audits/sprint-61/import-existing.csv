@@ -1,0 +1,5 @@
+external_id,integer_value,decimal_value,active,event_date,local_time,instant,uid,payload,status,amount,tags,note
+001234,42,1234.50,yes,2026-07-30,2026-07-30 10:15:00,2026-07-30T08:15:00Z,7f452f5d-ec7e-4762-9b2b-e278aac7423a,"{""kind"":""ordinary"",""ok"":true}",new,12.50,"{alpha,""comma,value""}","ordinary text"
+UNICODE-雪,2147483647,0.01,false,2024-02-29,2024-02-29 23:59:59,2024-02-29T23:59:59+02:00,569a3ff9-31f7-4b8a-977e-577521a1983b,"{""line"":""one\ntwo"",""emoji"":""☕""}",paid,0.01,"{unicode-雪}","line one
+line two"
+EMPTY-NULL,0,\N,1,\N,\N,\N,43ce0434-d8bc-4702-a59d-8ea735fa759d,\N,closed,\N,{},""

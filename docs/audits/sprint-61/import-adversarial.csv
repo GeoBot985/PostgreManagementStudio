@@ -1,0 +1,6 @@
+id,select,duplicate,duplicate,,integer,big_integer,decimal,decimal_comma,boolean,date,ambiguous_date,timestamp,timestamp_offset,uuid,json,array,note
+001234,"comma, inside",first,second,blank,42,9223372036854775807,1234.50,"1,25",yes,2026-07-30,01/02/2026,2026-07-30 10:15:00,2026-07-30T08:15:00Z,7f452f5d-ec7e-4762-9b2b-e278aac7423a,"{""ok"":true}","{one,two}","quote ""inside"""
+雪,"",alpha,beta,,not-an-integer,999999999999999999999,NaN,"12,34",maybe,2026-02-30,02/03/04,invalid,invalid,not-a-uuid,"{bad json","{broken","multi
+line"
+too,few,columns
+"unclosed,quoted,row
