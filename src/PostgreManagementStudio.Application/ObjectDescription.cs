@@ -12,6 +12,14 @@ public sealed record EditorObjectReference(
     string? RoutineSignature = null,
     bool IsEditorLocal = false);
 
+public sealed record DescriptionEditorBinding(
+    Guid QueryTabId,
+    long DocumentVersion,
+    int CaretIndex,
+    string SqlSnapshot,
+    Guid ConnectionGenerationId,
+    string Database);
+
 public interface IEditorObjectResolver
 {
     EditorObjectReference? Resolve(string sql, int caretIndex, int selectionStart, int selectionLength);
@@ -48,16 +56,19 @@ public sealed class EditorObjectResolver : IEditorObjectResolver
             .Select(match => Unquote(match.Groups["name"].Value))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var aliases = ReadAliases(statement);
-        if (parts.Count is 1 or 2 && aliases.TryGetValue(parts[0], out var relation))
+        if (parts.Count is 1 or 2 && aliases.TryGetValue(parts[0], out var aliasBinding))
         {
             var member = parts.Count == 2 ? parts[1] : null;
-            return new(text, relation, parts[0], member, signature,
-                IsEditorLocal: ctes.Contains(relation[0]));
+            return new(text, aliasBinding.Relation,
+                aliasBinding.IsExplicit ? parts[0] : null, member, signature,
+                IsEditorLocal: ctes.Contains(aliasBinding.Relation[0]));
         }
         var matchingAlias = aliases.FirstOrDefault(pair =>
-            pair.Value.SequenceEqual(parts, StringComparer.OrdinalIgnoreCase));
+            pair.Value.Relation.SequenceEqual(parts, StringComparer.OrdinalIgnoreCase));
         if (!string.IsNullOrWhiteSpace(matchingAlias.Key))
-            return new(text, parts, matchingAlias.Key, RoutineSignature: signature,
+            return new(text, parts,
+                matchingAlias.Value.IsExplicit ? matchingAlias.Key : null,
+                RoutineSignature: signature,
                 IsEditorLocal: ctes.Contains(parts[0]));
 
         if (ctes.Contains(parts[0]))
@@ -178,18 +189,19 @@ public sealed class EditorObjectResolver : IEditorObjectResolver
         return parts;
     }
 
-    private static Dictionary<string, IReadOnlyList<string>> ReadAliases(string statement)
+    private static Dictionary<string, RelationBinding> ReadAliases(string statement)
     {
-        var result = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        var result = new Dictionary<string, RelationBinding>(StringComparer.OrdinalIgnoreCase);
         foreach (Match match in RelationAliasPattern.Matches(statement))
         {
             var parts = ParseParts(match.Groups["name"].Value);
             if (parts.Count == 0) continue;
-            var alias = match.Groups["alias"].Success
+            var explicitAlias = match.Groups["alias"].Success
+                && !IsClauseKeyword(Unquote(match.Groups["alias"].Value));
+            var alias = explicitAlias
                 ? Unquote(match.Groups["alias"].Value)
                 : parts[^1];
-            if (IsClauseKeyword(alias)) alias = parts[^1];
-            result[alias] = parts;
+            result[alias] = new(parts, explicitAlias);
         }
         return result;
     }
@@ -218,6 +230,7 @@ public sealed class EditorObjectResolver : IEditorObjectResolver
     private static bool IsIdentifierStart(char value) => value == '_' || char.IsLetter(value);
     private static bool IsIdentifierPart(char value) => value is '_' or '$' || char.IsLetterOrDigit(value);
     private sealed record Token(int Start, int End, string Text);
+    private sealed record RelationBinding(IReadOnlyList<string> Relation, bool IsExplicit);
 }
 
 public sealed record ObjectDescriptionCandidate(
@@ -409,7 +422,19 @@ public static class ColumnListInsertionService
                 ? "No matching SELECT wildcard was found in the current statement."
                 : "More than one matching wildcard exists; select the intended wildcard first.");
         var wildcard = matches[0];
-        var replacement = Environment.NewLine + formattedList;
+        var lineEnding = sql.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+        var beforeWildcard = list.Value[..wildcard.Start];
+        var lastLineBreak = Math.Max(
+            beforeWildcard.LastIndexOf('\n'),
+            beforeWildcard.LastIndexOf('\r'));
+        var existingIndentation = beforeWildcard[(lastLineBreak + 1)..];
+        var wildcardAlreadyOnOwnLine = lastLineBreak >= 0
+            && existingIndentation.All(character => character is ' ' or '\t');
+        var replacement = wildcardAlreadyOnOwnLine
+            ? formattedList.StartsWith(existingIndentation, StringComparison.Ordinal)
+                ? formattedList[existingIndentation.Length..]
+                : formattedList.TrimStart(' ', '\t')
+            : lineEnding + formattedList;
         var absoluteStart = statementStart + list.Index + wildcard.Start;
         return new(absoluteStart, wildcard.Length, replacement,
             absoluteStart + replacement.Length);

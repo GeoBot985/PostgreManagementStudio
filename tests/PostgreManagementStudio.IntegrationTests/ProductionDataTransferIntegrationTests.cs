@@ -51,7 +51,7 @@ public sealed class ProductionDataTransferIntegrationTests
             };
             var request = new ImportRequest(path, "PMS Regression", table,
                 columns.Select((column, index) => new ColumnMapping(index, column.Name)).ToArray(),
-                new(), new(ImportStrategy.BatchInsert, Transaction: TransactionMode.AllRows),
+                new(), new(ImportStrategy.Copy, Transaction: TransactionMode.AllRows),
                 columns, true, NewTableSqlBuilder.Build("PMS Regression", table, columns));
 
             var result = await new NpgsqlDataTransferService().ImportAsync(ConnectionString, request);
@@ -76,6 +76,95 @@ public sealed class ProductionDataTransferIntegrationTests
         {
             File.Delete(path);
             await DropAsync(table);
+        }
+    }
+
+    [SeededPostgreSqlFact]
+    public async Task RequestedCopyFallsBackForJsonEnumDomainArrayAndReportsInvalidJsonContext()
+    {
+        var suffix = Guid.NewGuid().ToString("N");
+        var table = "Sprint 62 Complex " + suffix;
+        var enumName = "Sprint 62 State " + suffix;
+        var domainName = "Sprint 62 Amount " + suffix;
+        var path = TemporaryPath(".csv");
+        try
+        {
+            await ExecuteAsync(
+                $"CREATE TYPE {Quote("PMS Regression")}.{Quote(enumName)} AS ENUM ('new','done');"
+                + $"CREATE DOMAIN {Quote("PMS Regression")}.{Quote(domainName)} AS numeric(12,2) CHECK (VALUE >= 0);"
+                + $"CREATE TABLE {Quote("PMS Regression")}.{Quote(table)} ("
+                + "id integer PRIMARY KEY,"
+                + "payload_json json NOT NULL,"
+                + "payload_jsonb jsonb NOT NULL,"
+                + $"state {Quote("PMS Regression")}.{Quote(enumName)} NOT NULL,"
+                + $"amount {Quote("PMS Regression")}.{Quote(domainName)} NOT NULL,"
+                + "labels text[] NOT NULL,"
+                + "external_id uuid NOT NULL,"
+                + "binary_value bytea NOT NULL,"
+                + "event_date date NOT NULL,"
+                + "event_time time NOT NULL,"
+                + "local_stamp timestamp without time zone NOT NULL,"
+                + "instant timestamp with time zone NOT NULL,"
+                + "duration interval NOT NULL,"
+                + "address inet NOT NULL,"
+                + "span int4range NOT NULL,"
+                + "spans int4multirange NOT NULL)");
+            await File.WriteAllTextAsync(path,
+                "id,payload_json,payload_jsonb,state,amount,labels,external_id,binary_value,event_date,event_time,local_stamp,instant,duration,address,span,spans\r\n"
+                + "1,\"{\"\"status\"\":\"\"active\"\",\"\"count\"\":3}\",\"null\",new,12.50,\"{\"\"alpha\"\",\"\"comma,value\"\"}\",12345678-1234-5678-9abc-123456789abc,\\x00FF,2026-07-30,10:15:30,2026-07-30 10:15:30,2026-07-30T08:15:30Z,01:02:03,192.168.1.1/24,\"[1,5)\",\"{[1,5),[10,12)}\"\r\n");
+            var types = new[]
+            {
+                "integer", "json", "jsonb",
+                $"{Quote("PMS Regression")}.{Quote(enumName)}",
+                $"{Quote("PMS Regression")}.{Quote(domainName)}",
+                "text[]", "uuid", "bytea", "date", "time",
+                "timestamp without time zone", "timestamp with time zone",
+                "interval", "inet", "int4range", "int4multirange",
+            };
+            var names = new[]
+            {
+                "id", "payload_json", "payload_jsonb", "state", "amount", "labels",
+                "external_id", "binary_value", "event_date", "event_time", "local_stamp",
+                "instant", "duration", "address", "span", "spans",
+            };
+            var columns = names.Select((name, index) =>
+                new DestinationColumn(name, types[index], false)).ToArray();
+            var mappings = names.Select((name, index) => new ColumnMapping(index, name)).ToArray();
+            var service = new NpgsqlDataTransferService();
+
+            var success = await service.ImportAsync(ConnectionString,
+                new(path, "PMS Regression", table, mappings, new(),
+                    new(ImportStrategy.Copy, Transaction: TransactionMode.AllRows),
+                    columns, SourceColumnNames: names));
+
+            Assert.Equal("Completed", success.Status);
+            Assert.Equal(1, success.RowsWritten);
+            Assert.Equal(1, await ScalarAsync(table));
+
+            await File.WriteAllTextAsync(path,
+                "id,payload_json,payload_jsonb,state,amount,labels,external_id,binary_value,event_date,event_time,local_stamp,instant,duration,address,span,spans\r\n"
+                + "2,\"{bad json\",\"{}\",new,12.50,\"{alpha}\",12345678-1234-5678-9abc-123456789abc,\\x00FF,2026-07-30,10:15:30,2026-07-30 10:15:30,2026-07-30T08:15:30Z,01:02:03,192.168.1.1,\"[1,5)\",\"{[1,5)}\"\r\n");
+            var failure = await service.ImportAsync(ConnectionString,
+                new(path, "PMS Regression", table, mappings, new(),
+                    new(ImportStrategy.Copy, Transaction: TransactionMode.AllRows),
+                    columns, SourceColumnNames: names));
+
+            Assert.StartsWith("Failed", failure.Status);
+            Assert.Equal(0, failure.RowsWritten);
+            Assert.Equal(1, await ScalarAsync(table));
+            var diagnostic = Assert.Single(failure.Diagnostics!);
+            Assert.Equal(2, diagnostic.LogicalRow);
+            Assert.Equal("payload_json", diagnostic.SourceColumn);
+            Assert.Equal("payload_json", diagnostic.DestinationColumn);
+            Assert.Equal("json", diagnostic.DestinationPostgreSqlType);
+            Assert.Contains("not valid json", diagnostic.Message, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            File.Delete(path);
+            await ExecuteAsync($"DROP TABLE IF EXISTS {Quote("PMS Regression")}.{Quote(table)};"
+                + $"DROP DOMAIN IF EXISTS {Quote("PMS Regression")}.{Quote(domainName)};"
+                + $"DROP TYPE IF EXISTS {Quote("PMS Regression")}.{Quote(enumName)};");
         }
     }
 

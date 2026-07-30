@@ -41,7 +41,9 @@ Copy-Item (Join-Path $repo 'scripts\release\verify-package.ps1') $stage
 Copy-Item (Join-Path $repo 'scripts\release\LICENSE.txt') $stage
 Copy-Item (Join-Path $repo 'scripts\release\THIRD-PARTY-NOTICES.txt') $stage
 
-$files = Get-ChildItem -LiteralPath $publish -File -Recurse | ForEach-Object {
+$files = Get-ChildItem -LiteralPath $publish -File -Recurse |
+    Sort-Object { $_.FullName.Substring($stage.Length + 1).Replace('\','/') } |
+    ForEach-Object {
     [ordered]@{ path = $_.FullName.Substring($stage.Length + 1).Replace('\','/'); size = $_.Length; sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
 }
 $manifest = [ordered]@{
@@ -56,12 +58,41 @@ $manifest = [ordered]@{
     files = @($files)
 }
 $manifest | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $stage 'release-manifest.json') -Encoding UTF8
-Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $package -CompressionLevel Optimal
+
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$packageStream = [IO.File]::Open($package, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+try {
+    $archive = [IO.Compression.ZipArchive]::new(
+        $packageStream, [IO.Compression.ZipArchiveMode]::Create, $false)
+    try {
+        $normalizedTimestamp = [DateTimeOffset]::new(2000, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
+        Get-ChildItem -LiteralPath $stage -File -Recurse |
+            Sort-Object { $_.FullName.Substring($stage.Length + 1).Replace('\','/') } |
+            ForEach-Object {
+                $entryName = $_.FullName.Substring($stage.Length + 1).Replace('\','/')
+                $entry = $archive.CreateEntry($entryName, [IO.Compression.CompressionLevel]::Optimal)
+                $entry.LastWriteTime = $normalizedTimestamp
+                $entry.ExternalAttributes = 0
+                $entryStream = $entry.Open()
+                try {
+                    $sourceStream = [IO.File]::OpenRead($_.FullName)
+                    try { $sourceStream.CopyTo($entryStream) }
+                    finally { $sourceStream.Dispose() }
+                }
+                finally { $entryStream.Dispose() }
+            }
+    }
+    finally { $archive.Dispose() }
+}
+finally { $packageStream.Dispose() }
 $packageHash = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash.ToLowerInvariant()
 $manifest.packageSha256 = $packageHash
 $manifest | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $root 'release-manifest.json') -Encoding UTF8
 "$packageHash  $([IO.Path]::GetFileName($package))" | Set-Content (Join-Path $root 'checksums.sha256') -Encoding ASCII
-$inventory = Get-ChildItem -LiteralPath $stage -File -Recurse | ForEach-Object {
+$inventory = Get-ChildItem -LiteralPath $stage -File -Recurse |
+    Sort-Object { $_.FullName.Substring($stage.Length + 1).Replace('\','/') } |
+    ForEach-Object {
     [ordered]@{ path = $_.FullName.Substring($stage.Length + 1).Replace('\','/'); size = $_.Length; sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
 }
 $inventory | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $root 'package-inventory.json') -Encoding UTF8

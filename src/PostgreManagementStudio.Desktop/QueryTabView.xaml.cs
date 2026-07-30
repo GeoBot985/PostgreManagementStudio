@@ -24,6 +24,7 @@ public partial class QueryTabView : UserControl
     private CancellationTokenSource? _descriptionCancellation;
     private ObjectDescription? _description;
     private EditorObjectReference? _descriptionReference;
+    private DescriptionEditorBinding? _descriptionBinding;
     private readonly ResultDisplayPageService _resultPages = new();
     private readonly LatestRequestCoordinator<IReadOnlyList<CompletionItem>> _completionRequests = new();
     private readonly LatestRequestCoordinator<ObjectSearchBatch> _searchRequests = new();
@@ -323,6 +324,7 @@ public partial class QueryTabView : UserControl
 
     public async Task DescribeObjectAsync()
     {
+        var binding = CaptureDescriptionBinding();
         var reference = _editorObjectResolver.Resolve(
             SqlText.Text, SqlText.CaretIndex, SqlText.SelectionStart, SqlText.SelectionLength);
         if (reference is null)
@@ -331,6 +333,7 @@ public partial class QueryTabView : UserControl
             return;
         }
         _descriptionReference = reference;
+        _descriptionBinding = binding;
         OutputTabs.SelectedItem = DescriptionTab;
         DescriptionSummary.Text = $"Resolving {reference.DisplayText}…";
         WorkspaceStateChanged?.Invoke(this, EventArgs.Empty);
@@ -373,7 +376,7 @@ public partial class QueryTabView : UserControl
             var description = await _objectDescriptions.LoadAsync(
                 CurrentConnectionString(), DatabaseText.Text, candidate, targetColumn,
                 _descriptionCancellation.Token);
-            PresentDescription(description);
+            BindDescription(reference, description, binding);
             try
             {
                 var secondary = await _objectDescriptions.LoadSecondaryAsync(
@@ -442,6 +445,24 @@ public partial class QueryTabView : UserControl
         WorkspaceStateChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    internal void BindDescription(
+        EditorObjectReference reference,
+        ObjectDescription description,
+        DescriptionEditorBinding? binding = null)
+    {
+        _descriptionReference = reference;
+        _descriptionBinding = binding ?? CaptureDescriptionBinding();
+        PresentDescription(description);
+    }
+
+    private DescriptionEditorBinding CaptureDescriptionBinding() => new(
+        _document.TabId,
+        Interlocked.Read(ref _documentVersion),
+        SqlText.CaretIndex,
+        SqlText.Text,
+        _document.ConnectionGenerationId,
+        DatabaseText.Text);
+
     private void PresentSecondaryDetails(ObjectDescriptionSecondaryDetails secondary)
     {
         if (_description is null) return;
@@ -462,6 +483,7 @@ public partial class QueryTabView : UserControl
     private void ShowDescriptionMessage(string message)
     {
         _description = null;
+        _descriptionBinding = null;
         _descriptionRows.Clear();
         DescriptionColumns.ItemsSource = _descriptionRows;
         DescriptionSummary.Text = message;
@@ -569,14 +591,28 @@ public partial class QueryTabView : UserControl
     {
         try
         {
-            var qualified = _descriptionReference?.RelationAlias is not null;
-            var format = qualified ? ColumnListFormat.QualifiedSelectList : ColumnListFormat.SelectList;
-            var formatted = FormatSelected(format);
-            var edit = ColumnListInsertionService.ReplaceWildcard(
-                SqlText.Text, SqlText.CaretIndex, formatted, _descriptionReference?.RelationAlias);
-            ApplyEditorEdit(edit);
+            ReplaceDescriptionWildcard();
         }
         catch (Exception ex) { ShowDescriptionMessage(SecretRedactor.Redact(ex.Message)); }
+    }
+
+    internal void ReplaceDescriptionWildcard()
+    {
+        var binding = _descriptionBinding
+            ?? throw new InvalidOperationException("Describe the relation again before replacing a wildcard.");
+        if (binding.QueryTabId != _document.TabId)
+            throw new InvalidOperationException(
+                "The description belongs to a different query tab. Run Alt+F1 in this tab and retry.");
+        if (binding.DocumentVersion != Interlocked.Read(ref _documentVersion)
+            || !string.Equals(binding.SqlSnapshot, SqlText.Text, StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                "The query changed after Alt+F1. Describe the relation again before replacing a wildcard.");
+        var qualified = _descriptionReference?.RelationAlias is not null;
+        var format = qualified ? ColumnListFormat.QualifiedSelectList : ColumnListFormat.SelectList;
+        var formatted = FormatSelected(format, binding.CaretIndex);
+        var edit = ColumnListInsertionService.ReplaceWildcard(
+            SqlText.Text, binding.CaretIndex, formatted, _descriptionReference?.RelationAlias);
+        ApplyEditorEdit(edit);
     }
 
     private string SelectedColumnList()
@@ -586,10 +622,10 @@ public partial class QueryTabView : UserControl
         return FormatSelected((ColumnListFormat)Math.Max(0, DescriptionFormat.SelectedIndex));
     }
 
-    private string FormatSelected(ColumnListFormat format)
+    private string FormatSelected(ColumnListFormat format, int? caretIndex = null)
     {
         var lineEnding = SqlText.Text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
-        var indentation = DetectIndentation(SqlText.Text, SqlText.CaretIndex);
+        var indentation = DetectIndentation(SqlText.Text, caretIndex ?? SqlText.CaretIndex);
         return ColumnListFormatter.Format(
             _descriptionRows.Where(row => row.IsIncluded).Select(row => row.Column),
             format, _descriptionReference?.RelationAlias, lineEnding, indentation);

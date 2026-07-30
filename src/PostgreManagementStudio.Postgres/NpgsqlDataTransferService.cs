@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text.Json;
 using Npgsql;
 using PostgreManagementStudio.Application;
 
@@ -17,9 +18,17 @@ public sealed class NpgsqlDataTransferService(INpgsqlConnectionFactory? connecti
         CancellationToken cancellationToken = default)
     {
         ImportMappingService.Validate(request.Mappings, request.DestinationColumns);
+        var effectiveStrategy = ImportStrategySelector.Select(
+            request.Options.Strategy, request.Mappings, request.DestinationColumns);
+        request = request with
+        {
+            Options = request.Options with { Strategy = effectiveStrategy },
+        };
+        var operationId = Guid.NewGuid();
         var started = Stopwatch.StartNew();
         var errors = new List<string>();
         var rejectedRows = new List<RejectedRow>();
+        var diagnostics = new List<TransferError>();
         long read = 0;
         long written = 0;
         long rejected = 0;
@@ -67,7 +76,8 @@ public sealed class NpgsqlDataTransferService(INpgsqlConnectionFactory? connecti
                     {
                         read++;
                         if (accepted) written++;
-                        Report(progress, read, written, rejected, "Fast bulk import", request.SourcePath,
+                        Report(progress, read, written, rejected,
+                            ImportStrategySelector.DisplayName(effectiveStrategy), request.SourcePath,
                             started.Elapsed, batch);
                     }, cancellationToken).ConfigureAwait(false);
             }
@@ -127,7 +137,8 @@ public sealed class NpgsqlDataTransferService(INpgsqlConnectionFactory? connecti
                         batch++;
                         partialCommit = written > 0;
                     }
-                    Report(progress, read, written, rejected, "Row-by-row validated import",
+                    Report(progress, read, written, rejected,
+                        ImportStrategySelector.DisplayName(effectiveStrategy),
                         request.SourcePath, started.Elapsed, batch);
                     if (rejected >= request.Options.ErrorLimit)
                     {
@@ -154,7 +165,7 @@ public sealed class NpgsqlDataTransferService(INpgsqlConnectionFactory? connecti
                     return new("Failed — stopped on first error", read, written, rejected,
                         started.Elapsed, errors, skipped, partialCommit,
                         created && request.Options.Transaction != TransactionMode.AllRows,
-                        haltedRejectedPath, ["The active transaction was rolled back."]);
+                        haltedRejectedPath, ["The active transaction was rolled back."], diagnostics);
                 }
                 if (transaction is not null)
                 {
@@ -174,15 +185,23 @@ public sealed class NpgsqlDataTransferService(INpgsqlConnectionFactory? connecti
                 .ConfigureAwait(false);
             return new(rejected == 0 ? "Completed" : "Completed with rejected rows",
                 read, written, rejected, started.Elapsed, errors, skipped, partialCommit,
-                created, rejectedPath, []);
+                created, rejectedPath, [], diagnostics);
 
             void Reject(DelimitedRecord record, string? target, string error, string? sqlState)
             {
                 rejected++;
-                var safe = $"Source row {record.SourceRow}: {error}";
+                var diagnostic = BuildDiagnostic(operationId, request, record, target,
+                    new FormatException(error), effectiveStrategy,
+                    request.Options.Transaction != TransactionMode.AllRows && written > 0,
+                    sqlState);
+                diagnostics.Add(diagnostic);
+                var safe = FormatDiagnostic(diagnostic);
                 errors.Add(safe);
                 rejectedRows.Add(new(record.SourceRow,
-                    record.Fields.Select(field => field.Value).ToArray(), target, error, sqlState));
+                    record.Fields.Select(field => field.Value).ToArray(), target, error, sqlState,
+                    record.PhysicalLineStart, record.PhysicalLineEnd,
+                    diagnostic.SourceColumn, diagnostic.DestinationPostgreSqlType,
+                    diagnostic.TransferStrategy));
             }
         }
         catch (OperationCanceledException)
@@ -202,7 +221,37 @@ public sealed class NpgsqlDataTransferService(INpgsqlConnectionFactory? connecti
                 rejected, started.Elapsed, errors, skipped,
                 request.Options.Transaction != TransactionMode.AllRows && written > 0,
                 created && request.Options.Transaction != TransactionMode.AllRows,
-                rejectedPath, ["Cancellation stopped additional input and rolled back the active transaction."]);
+                rejectedPath, ["Cancellation stopped additional input and rolled back the active transaction."],
+                diagnostics);
+        }
+        catch (ImportRecordException exception)
+        {
+            if (transaction is not null)
+            {
+                try { await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false); }
+                catch (ObjectDisposedException) { }
+                await transaction.DisposeAsync().ConfigureAwait(false);
+                transaction = null;
+            }
+            read = Math.Max(read, exception.Record.SourceRow
+                - (request.FileSettings.HasHeader ? 1 : 0));
+            rejected++;
+            var diagnostic = BuildDiagnostic(operationId, request, exception.Record,
+                exception.TargetColumn, exception.InnerException ?? exception,
+                effectiveStrategy, false);
+            diagnostics.Add(diagnostic);
+            errors.Add(FormatDiagnostic(diagnostic));
+            rejectedRows.Add(new(exception.Record.SourceRow,
+                exception.Record.Fields.Select(field => field.Value).ToArray(),
+                exception.TargetColumn, diagnostic.Message, diagnostic.SqlState,
+                exception.Record.PhysicalLineStart, exception.Record.PhysicalLineEnd,
+                diagnostic.SourceColumn, diagnostic.DestinationPostgreSqlType,
+                diagnostic.TransferStrategy));
+            var rejectedPath = await WriteRejectedAsync(
+                request, rejectedRows, CancellationToken.None).ConfigureAwait(false);
+            return new("Failed — atomic import rolled back", read, 0, rejected,
+                started.Elapsed, errors, skipped, false, false, rejectedPath,
+                ["The active transaction was rolled back; no rows were committed."], diagnostics);
         }
         catch
         {
@@ -233,13 +282,22 @@ public sealed class NpgsqlDataTransferService(INpgsqlConnectionFactory? connecti
         await foreach (var record in records.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             if (request.FileSettings.HasHeader && record.SourceRow == 1) continue;
-            if (record.IsMalformed) throw new FormatException(
-                $"Source row {record.SourceRow}: {record.Error}");
-            var values = ConvertRecord(request, mappings, record);
-            await importer.StartRowAsync(cancellationToken).ConfigureAwait(false);
-            foreach (var value in values)
-                await importer.WriteAsync(value ?? DBNull.Value, cancellationToken).ConfigureAwait(false);
-            rowCompleted(record, true);
+            if (record.IsMalformed)
+                throw new ImportRecordException(record, null,
+                    new FormatException(record.Error));
+            try
+            {
+                var values = ConvertRecord(request, mappings, record);
+                await importer.StartRowAsync(cancellationToken).ConfigureAwait(false);
+                foreach (var value in values)
+                    await importer.WriteAsync(value ?? DBNull.Value, cancellationToken).ConfigureAwait(false);
+                rowCompleted(record, true);
+            }
+            catch (Exception exception) when (exception is FormatException
+                or OverflowException or ArgumentException or NpgsqlException)
+            {
+                throw new ImportRecordException(record, TryColumn(exception), exception);
+            }
         }
         await importer.CompleteAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -313,8 +371,13 @@ public sealed class NpgsqlDataTransferService(INpgsqlConnectionFactory? connecti
         if (field.IsExplicitNull
             || rule.NullMarker is { } marker && value.Equals(marker, StringComparison.Ordinal)
             || rule.EmptyStringBecomesNull && value.Length == 0) return null;
-        if (value.Length == 0) return string.Empty;
         var normalizedType = type.ToLowerInvariant();
+        if (value.Length == 0)
+        {
+            if (IsTextual(normalizedType)) return string.Empty;
+            throw new FormatException(
+                $"An empty string is not valid for destination type {type}; use the configured NULL marker for SQL NULL.");
+        }
         if (normalizedType is "boolean" or "bool")
         {
             var trueValues = rule.TrueValues ?? ["true", "t", "1", "yes"];
@@ -368,12 +431,35 @@ public sealed class NpgsqlDataTransferService(INpgsqlConnectionFactory? connecti
                     : DateTime.Parse(value, CultureInfo.InvariantCulture),
                 DateTimeKind.Unspecified);
         if (normalizedType == "uuid") return Guid.Parse(value);
-        if (normalizedType is "json" or "jsonb") return value;
+        if (normalizedType is "json" or "jsonb")
+        {
+            try { using var _ = JsonDocument.Parse(value); }
+            catch (JsonException exception)
+            {
+                throw new FormatException(
+                    $"The value is not valid {normalizedType}: {exception.Message}", exception);
+            }
+            return value;
+        }
         if (normalizedType == "bytea")
-            return value.StartsWith("\\x", StringComparison.OrdinalIgnoreCase)
-                ? Convert.FromHexString(value[2..]) : System.Text.Encoding.UTF8.GetBytes(value);
+        {
+            if (!value.StartsWith("\\x", StringComparison.OrdinalIgnoreCase))
+                throw new FormatException(
+                    "bytea input must use PostgreSQL hexadecimal format beginning with \\x.");
+            try { return Convert.FromHexString(value[2..]); }
+            catch (FormatException exception)
+            {
+                throw new FormatException("The bytea hexadecimal payload is invalid.", exception);
+            }
+        }
         return value;
     }
+
+    private static bool IsTextual(string normalizedType) =>
+        normalizedType is "text" or "json" or "jsonb"
+        || normalizedType.StartsWith("character", StringComparison.Ordinal)
+        || normalizedType.StartsWith("varchar", StringComparison.Ordinal)
+        || normalizedType.StartsWith("char", StringComparison.Ordinal);
 
     private static async Task PrepareDestinationAsync(
         NpgsqlConnection connection,
@@ -435,5 +521,96 @@ public sealed class NpgsqlDataTransferService(INpgsqlConnectionFactory? connecti
         var match = System.Text.RegularExpressions.Regex.Match(
             exception.Message, @"Column (?<name>[^:]+):");
         return match.Success ? match.Groups["name"].Value : null;
+    }
+
+    private static TransferError BuildDiagnostic(
+        Guid operationId,
+        ImportRequest request,
+        DelimitedRecord record,
+        string? targetColumn,
+        Exception exception,
+        ImportStrategy strategy,
+        bool anyRowsCommitted,
+        string? sqlStateOverride = null)
+    {
+        var mapping = targetColumn is null
+            ? null
+            : request.Mappings.FirstOrDefault(item =>
+                item.Included && item.DestinationName?.Equals(
+                    targetColumn, StringComparison.Ordinal) == true);
+        var sourceOrdinal = mapping?.SourceOrdinal;
+        var sourceColumn = sourceOrdinal is { } ordinal
+            ? request.SourceColumnNames?.ElementAtOrDefault(ordinal) ?? $"column_{ordinal + 1}"
+            : null;
+        var value = sourceOrdinal is { } valueOrdinal && valueOrdinal < record.Fields.Count
+            ? SafeValue(record.Fields[valueOrdinal].Value)
+            : null;
+        var destination = targetColumn is null
+            ? null
+            : request.DestinationColumns.FirstOrDefault(column =>
+                column.Name.Equals(targetColumn, StringComparison.Ordinal));
+        var postgres = exception as PostgresException;
+        var message = SecretRedactor.Redact(exception.Message);
+        return new(
+            operationId,
+            Path.GetFileName(request.SourcePath),
+            record.SourceRow,
+            record.PhysicalLineStart ?? record.SourceRow,
+            record.PhysicalLineEnd ?? record.SourceRow,
+            sourceColumn,
+            sourceOrdinal is null ? null : sourceOrdinal + 1,
+            value,
+            PostgreSqlIdentifierQuoter.Qualified(request.Schema, request.Table),
+            targetColumn,
+            destination?.PostgreSqlType,
+            sourceOrdinal is { } ruleOrdinal && request.ColumnRules?.ContainsKey(ruleOrdinal) == true
+                ? "Reviewed per-column conversion rule"
+                : "Default invariant conversion",
+            ImportStrategySelector.DisplayName(strategy),
+            sqlStateOverride ?? postgres?.SqlState,
+            message,
+            postgres?.Detail,
+            postgres?.Hint,
+            postgres?.ConstraintName,
+            $"{operationId:N}:{exception.GetType().Name}",
+            request.Options.Transaction == TransactionMode.AllRows
+                ? "Atomic transaction rolled back"
+                : anyRowsCommitted ? "Prior batches committed" : "Active batch rolled back",
+            anyRowsCommitted);
+    }
+
+    private static string FormatDiagnostic(TransferError diagnostic)
+    {
+        var lines = diagnostic.PhysicalLineStart == diagnostic.PhysicalLineEnd
+            ? $"physical line {diagnostic.PhysicalLineStart}"
+            : $"physical lines {diagnostic.PhysicalLineStart}–{diagnostic.PhysicalLineEnd}";
+        var source = diagnostic.SourceColumn is null
+            ? "source column unavailable"
+            : $"source column {diagnostic.SourceColumn}";
+        var destination = diagnostic.DestinationColumn is null
+            ? "destination column could not be isolated"
+            : $"destination column {diagnostic.DestinationRelation}.{PostgreSqlIdentifierQuoter.Quote(diagnostic.DestinationColumn)} ({diagnostic.DestinationPostgreSqlType})";
+        return $"Logical row {diagnostic.LogicalRow}, {lines}; {source}; {destination}: {diagnostic.Message}";
+    }
+
+    private static string SafeValue(string value)
+    {
+        const int maximum = 160;
+        var escaped = value.Replace("\r", "\\r", StringComparison.Ordinal)
+            .Replace("\n", "\\n", StringComparison.Ordinal)
+            .Replace("\t", "\\t", StringComparison.Ordinal);
+        return escaped.Length <= maximum
+            ? escaped
+            : escaped[..maximum] + $"… <{escaped.Length - maximum} characters truncated>";
+    }
+
+    private sealed class ImportRecordException(
+        DelimitedRecord record,
+        string? targetColumn,
+        Exception innerException)
+        : Exception(innerException.Message, innerException)
+    {
+        public DelimitedRecord Record { get; } = record;
+        public string? TargetColumn { get; } = targetColumn;
     }
 }

@@ -24,9 +24,31 @@ public sealed record DestinationColumn(
 }
 public sealed record ColumnMapping(int SourceOrdinal, string? DestinationName, bool Included = true);
 public sealed record ImportOptions(ImportStrategy Strategy = ImportStrategy.Copy, ExistingDataMode ExistingData = ExistingDataMode.Append, TransactionMode Transaction = TransactionMode.AllRows, int BatchSize = 500, bool ContinueOnError = false, int ErrorLimit = 100, string? RejectedRowsPath = null, bool TrimWhitespace = false);
-public sealed record ImportRequest(string SourcePath, string Schema, string Table, IReadOnlyList<ColumnMapping> Mappings, DelimitedFileSettings FileSettings, ImportOptions Options, IReadOnlyList<DestinationColumn> DestinationColumns, bool CreateNewTable = false, string? CreateTableSql = null, IReadOnlyDictionary<int, ImportColumnRule>? ColumnRules = null);
+public sealed record ImportRequest(string SourcePath, string Schema, string Table, IReadOnlyList<ColumnMapping> Mappings, DelimitedFileSettings FileSettings, ImportOptions Options, IReadOnlyList<DestinationColumn> DestinationColumns, bool CreateNewTable = false, string? CreateTableSql = null, IReadOnlyDictionary<int, ImportColumnRule>? ColumnRules = null, IReadOnlyList<string>? SourceColumnNames = null);
 public sealed record ImportProgress(long RowsRead, long RowsWritten, long RowsRejected, string Phase, long BytesProcessed = 0, TimeSpan? Elapsed = null, int CurrentBatch = 0, bool CancellationRequested = false);
-public sealed record ImportResult(string Status, long RowsRead, long RowsWritten, long RowsRejected, TimeSpan Elapsed, IReadOnlyList<string> Errors, long RowsSkipped = 0, bool PartialCommit = false, bool NewTableCreated = false, string? RejectedRowsPath = null, IReadOnlyList<string>? Warnings = null);
+public sealed record TransferError(
+    Guid OperationId,
+    string SourceFile,
+    long LogicalRow,
+    long PhysicalLineStart,
+    long PhysicalLineEnd,
+    string? SourceColumn,
+    int? SourceColumnOrdinal,
+    string? SafeValuePreview,
+    string DestinationRelation,
+    string? DestinationColumn,
+    string? DestinationPostgreSqlType,
+    string ConversionRule,
+    string TransferStrategy,
+    string? SqlState,
+    string Message,
+    string? Detail,
+    string? Hint,
+    string? ConstraintName,
+    string ExceptionReference,
+    string TransactionState,
+    bool AnyRowsCommitted);
+public sealed record ImportResult(string Status, long RowsRead, long RowsWritten, long RowsRejected, TimeSpan Elapsed, IReadOnlyList<string> Errors, long RowsSkipped = 0, bool PartialCommit = false, bool NewTableCreated = false, string? RejectedRowsPath = null, IReadOnlyList<string>? Warnings = null, IReadOnlyList<TransferError>? Diagnostics = null);
 public static class DelimitedFileDetector { public static DelimitedFileSettings Detect(string path) { using var reader = new StreamReader(path, Encoding.UTF8, true); var line = reader.ReadLine() ?? ""; var choices = new[] { ',', '\t', ';', '|' }; return new(choices.OrderByDescending(c => line.Count(x => x == c)).First(), Encoding: reader.CurrentEncoding); } }
 public sealed class DelimitedFileReader
 {

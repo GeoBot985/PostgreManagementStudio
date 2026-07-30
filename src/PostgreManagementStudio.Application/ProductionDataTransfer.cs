@@ -45,7 +45,9 @@ public sealed record DelimitedField(
 public sealed record DelimitedRecord(
     long SourceRow,
     IReadOnlyList<DelimitedField> Fields,
-    string? Error = null)
+    string? Error = null,
+    long? PhysicalLineStart = null,
+    long? PhysicalLineEnd = null)
 {
     public bool IsMalformed => Error is not null;
 }
@@ -242,10 +244,14 @@ public sealed class ProductionDelimitedFileInspector
         var lineEnding = sample.Contains("\r\n", StringComparison.Ordinal) ? "CRLF"
             : sample.Contains('\n') ? "LF" : sample.Contains('\r') ? "CR" : "Unknown";
         var format = formatOverride ?? DetectFormat(sample);
-        var lineCount = sample.Count(character => character == '\n');
-        var estimatedRows = lineCount == 0 ? 1
-            : Math.Max(1, (long)Math.Round((double)info.Length / Math.Max(1, encoding.GetByteCount(sample))
-                * lineCount));
+        var sampledBytes = Math.Max(1, encoding.GetByteCount(sample));
+        var sampledRecords = CountLogicalRecords(sample, format.Quote);
+        var isCompleteSample = sampledBytes >= info.Length - encoding.GetPreamble().Length;
+        var estimatedRecords = isCompleteSample
+            ? sampledRecords
+            : Math.Max(1, (long)Math.Round(
+                (double)info.Length / sampledBytes * sampledRecords));
+        var estimatedRows = Math.Max(0, estimatedRecords - (format.HasHeader ? 1 : 0));
         var confidence = DelimiterConfidence(sample, format.Delimiter);
         var warnings = detected.Warnings.ToList();
         if (lineEnding == "Unknown") warnings.Add("No line ending was detected in the bounded source sample.");
@@ -305,8 +311,11 @@ public sealed class ProductionDelimitedFileInspector
         var quoted = false;
         var fieldWasQuoted = false;
         var row = 1L;
+        var physicalLine = 1L;
+        var recordStartLine = 1L;
         var skipped = 0;
         var pendingCr = false;
+        var priorQuotedCr = false;
         while (true)
         {
             var read = await reader.ReadAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false);
@@ -335,8 +344,20 @@ public sealed class ProductionDelimitedFileInspector
                     {
                         if (!format.AllowMultilineFields && character is '\r' or '\n')
                             yield return new(row++, Finish(fields, value, fieldWasQuoted, format),
-                                "A quoted field crossed a line boundary while multiline fields are disabled.");
+                                "A quoted field crossed a line boundary while multiline fields are disabled.",
+                                recordStartLine, physicalLine);
                         else value.Append(character);
+                        if (character == '\r')
+                        {
+                            physicalLine++;
+                            priorQuotedCr = true;
+                        }
+                        else if (character == '\n')
+                        {
+                            if (!priorQuotedCr) physicalLine++;
+                            priorQuotedCr = false;
+                        }
+                        else priorQuotedCr = false;
                     }
                 }
                 else if (format.Quote is { } quote && character == quote && value.Length == 0)
@@ -354,16 +375,26 @@ public sealed class ProductionDelimitedFileInspector
                     if (character == '\r') pendingCr = true;
                     var completed = Finish(fields, value, fieldWasQuoted, format);
                     fieldWasQuoted = false;
-                    if (skipped++ < format.SkipRows) { row++; continue; }
+                    var recordEndLine = physicalLine;
+                    physicalLine++;
+                    if (skipped++ < format.SkipRows)
+                    {
+                        row++;
+                        recordStartLine = physicalLine;
+                        continue;
+                    }
                     if (format.CommentPrefix is { Length: > 0 } prefix
                         && completed.Count > 0 && completed[0].Value.StartsWith(prefix, StringComparison.Ordinal))
                     {
                         row++;
+                        recordStartLine = physicalLine;
                         continue;
                     }
                     yield return completed.Count > format.MaximumColumns
-                        ? new(row++, completed, $"The row exceeds the {format.MaximumColumns} column limit.")
-                        : new(row++, completed);
+                        ? new(row++, completed, $"The row exceeds the {format.MaximumColumns} column limit.",
+                            recordStartLine, recordEndLine)
+                        : new(row++, completed, null, recordStartLine, recordEndLine);
+                    recordStartLine = physicalLine;
                 }
                 else
                 {
@@ -371,7 +402,8 @@ public sealed class ProductionDelimitedFileInspector
                     if (value.Length > format.MaximumFieldCharacters)
                     {
                         yield return new(row++, Finish(fields, value, fieldWasQuoted, format),
-                            $"A field exceeds the {format.MaximumFieldCharacters:N0} character limit.");
+                            $"A field exceeds the {format.MaximumFieldCharacters:N0} character limit.",
+                            recordStartLine, physicalLine);
                         fieldWasQuoted = false;
                         quoted = false;
                     }
@@ -380,9 +412,10 @@ public sealed class ProductionDelimitedFileInspector
         }
         if (quoted)
             yield return new(row, Finish(fields, value, fieldWasQuoted, format),
-                "The file ended inside a quoted field.");
+                "The file ended inside a quoted field.", recordStartLine, physicalLine);
         else if (value.Length > 0 || fields.Count > 0)
-            yield return new(row, Finish(fields, value, fieldWasQuoted, format));
+            yield return new(row, Finish(fields, value, fieldWasQuoted, format),
+                null, recordStartLine, physicalLine);
     }
 
     private static async Task<string> ReadSampleAsync(
@@ -419,6 +452,32 @@ public sealed class ProductionDelimitedFileInspector
             && secondValues.Any(LooksLikeData);
         var quote = sample.Contains('"') ? '"' : sample.Contains('\'') ? '\'' : (char?)null;
         return new(delimiter, quote, header);
+    }
+
+    private static long CountLogicalRecords(string sample, char? quote)
+    {
+        if (sample.Length == 0) return 0;
+        var records = 0L;
+        var quoted = false;
+        for (var index = 0; index < sample.Length; index++)
+        {
+            var character = sample[index];
+            if (quote is { } quoteCharacter && character == quoteCharacter)
+            {
+                if (quoted && index + 1 < sample.Length && sample[index + 1] == quoteCharacter)
+                    index++;
+                else quoted = !quoted;
+                continue;
+            }
+            if (!quoted && character is '\r' or '\n')
+            {
+                records++;
+                if (character == '\r' && index + 1 < sample.Length && sample[index + 1] == '\n')
+                    index++;
+            }
+        }
+        if (sample[^1] is not '\r' and not '\n') records++;
+        return records;
     }
 
     private static double DelimiterConfidence(string sample, char delimiter)
@@ -665,12 +724,48 @@ public static class ProductionImportPreflight
         if (!request.HasInsertPermission) errors.Add("INSERT permission is required on the destination table.");
         try { ImportMappingService.Validate(request.Mappings, request.DestinationColumns); }
         catch (ArgumentException exception) { errors.Add(exception.Message); }
-        if (request.CollectErrors && request.Strategy == ImportStrategy.Copy)
+        var effectiveStrategy = ImportStrategySelector.Select(
+            request.Strategy, request.Mappings, request.DestinationColumns);
+        if (request.CollectErrors && effectiveStrategy == ImportStrategy.Copy)
             errors.Add("Collect-errors mode requires row-by-row validated import.");
+        if (effectiveStrategy != request.Strategy)
+            warnings.Add("The selected fast path contains types that are not certified for binary COPY; validated typed batches will be used.");
         if (request.Transaction == TransactionMode.PerBatch)
             warnings.Add("Completed batches remain committed if a later batch fails or is cancelled.");
         return new(errors, warnings);
     }
+}
+
+public static class ImportStrategySelector
+{
+    private static readonly Regex CertifiedBinaryType = new(
+        """^(?:bool(?:ean)?|smallint|int2|integer|int4|bigint|int8|numeric(?:\(\d+(?:\s*,\s*\d+)?\))?|decimal(?:\(\d+(?:\s*,\s*\d+)?\))?|real|double\s+precision|date|time(?:\s+without\s+time\s+zone)?|timestamp\s+without\s+time\s+zone|timestamp\s+with\s+time\s+zone|timestamptz|uuid|bytea|text|character\s+varying(?:\(\d+\))?|varchar(?:\(\d+\))?)$""",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    public static ImportStrategy Select(
+        ImportStrategy requested,
+        IReadOnlyList<ColumnMapping> mappings,
+        IReadOnlyList<DestinationColumn> destinationColumns)
+    {
+        if (requested != ImportStrategy.Copy) return ImportStrategy.BatchInsert;
+        var includedTypes = mappings
+            .Where(mapping => mapping.Included && mapping.DestinationName is not null)
+            .Select(mapping => destinationColumns.Single(column =>
+                column.Name.Equals(mapping.DestinationName, StringComparison.Ordinal)).PostgreSqlType)
+            .ToArray();
+        return includedTypes.All(IsCertifiedForBinaryCopy)
+            ? ImportStrategy.Copy
+            : ImportStrategy.BatchInsert;
+    }
+
+    public static bool IsCertifiedForBinaryCopy(string postgreSqlType) =>
+        CertifiedBinaryType.IsMatch(postgreSqlType.Trim());
+
+    public static string DisplayName(ImportStrategy strategy) => strategy switch
+    {
+        ImportStrategy.Copy => "Fast bulk import using binary COPY",
+        _ => "Validated typed import using parameterised batches",
+    };
 }
 
 public static class NewTableSqlBuilder
@@ -721,15 +816,20 @@ public sealed class RejectedRowWriter
             await using (var writer = new StreamWriter(stream, new UTF8Encoding(false)))
             {
                 await writer.WriteLineAsync(
-                    "source_row,original_fields,destination_column,error_category,error_message,sql_state");
+                    "logical_row,physical_line_start,physical_line_end,source_column,original_fields,destination_column,destination_type,transfer_strategy,error_category,error_message,sql_state");
                 foreach (var row in rows)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var values = string.Join('\t', row.Values);
                     await writer.WriteLineAsync(string.Join(',',
                         Csv(row.SourceRow.ToString(CultureInfo.InvariantCulture)),
+                        Csv(row.PhysicalLineStart?.ToString(CultureInfo.InvariantCulture) ?? string.Empty),
+                        Csv(row.PhysicalLineEnd?.ToString(CultureInfo.InvariantCulture) ?? string.Empty),
+                        Csv(row.SourceColumn ?? string.Empty),
                         Csv(values),
                         Csv(row.TargetColumn ?? string.Empty),
+                        Csv(row.DestinationType ?? string.Empty),
+                        Csv(row.TransferStrategy ?? string.Empty),
                         Csv(row.PostgreSqlErrorCode is null ? "Conversion" : "PostgreSQL"),
                         Csv(row.Error),
                         Csv(row.PostgreSqlErrorCode ?? string.Empty)));

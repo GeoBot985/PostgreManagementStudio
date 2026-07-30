@@ -74,6 +74,22 @@ public sealed class ObjectDescriptionTests
     }
 
     [Fact]
+    public void UnaliasedRelationDoesNotInventAliasForSimpleWildcard()
+    {
+        const string sql = "SELECT * FROM public.orders;";
+        var caret = sql.IndexOf("orders", StringComparison.Ordinal);
+
+        var result = _resolver.Resolve(sql, caret, 0, 0);
+
+        Assert.Equal(["public", "orders"], result!.NameParts);
+        Assert.Null(result.RelationAlias);
+        var edit = ColumnListInsertionService.ReplaceWildcard(
+            sql, caret, "    order_id,\n    status", result.RelationAlias);
+        var changed = sql.Remove(edit.Start, edit.Length).Insert(edit.Start, edit.Replacement);
+        Assert.Equal("SELECT \n    order_id,\n    status FROM public.orders;", changed);
+    }
+
+    [Fact]
     public void CteIsMarkedAsEditorLocal()
     {
         const string sql = "WITH recent AS (SELECT 1 AS id) SELECT recent.id FROM recent";
@@ -180,7 +196,19 @@ public sealed class ObjectDescriptionTests
             sql, sql.Length, "    \"a\"\"b\".id", "a\"b");
         var changed = sql.Remove(edit.Start, edit.Length).Insert(edit.Start, edit.Replacement);
 
-        Assert.Equal("SELECT \r\n    \"a\"\"b\".id FROM items AS \"a\"\"b\"", changed);
+        Assert.Equal("SELECT \n    \"a\"\"b\".id FROM items AS \"a\"\"b\"", changed);
+    }
+
+    [Fact]
+    public void WildcardReplacementPreservesLfLineEndings()
+    {
+        const string sql = "SELECT\n    o.*\nFROM orders o";
+        var edit = ColumnListInsertionService.ReplaceWildcard(
+            sql, sql.IndexOf("orders", StringComparison.Ordinal), "    o.id,\n    o.name", "o");
+        var changed = sql.Remove(edit.Start, edit.Length).Insert(edit.Start, edit.Replacement);
+
+        Assert.DoesNotContain("\r\n", changed);
+        Assert.Equal("SELECT\n    o.id,\n    o.name\nFROM orders o", changed);
     }
 
     [Fact]

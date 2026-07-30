@@ -12,7 +12,17 @@ public sealed record FormatDetection(TransferFormat Format, DelimitedFileSetting
 public sealed record InferredColumn(string Name, string PostgreSqlType, double Confidence, IReadOnlyList<string> Conflicts);
 public sealed record ImportPlan(string SourcePath, string Schema, string Table, IReadOnlyList<ColumnMapping> Mappings, ImportMode Mode, ImportExecutionMethod ExecutionMethod, TransactionMode Transaction, ImportErrorStrategy ErrorStrategy, bool ConfirmDestructive = false);
 public sealed record ImportValidationResult(IReadOnlyList<string> Errors, IReadOnlyList<string> Warnings) { public bool IsValid => Errors.Count == 0; }
-public sealed record RejectedRow(long SourceRow, IReadOnlyList<string> Values, string? TargetColumn, string Error, string? PostgreSqlErrorCode = null);
+public sealed record RejectedRow(
+    long SourceRow,
+    IReadOnlyList<string> Values,
+    string? TargetColumn,
+    string Error,
+    string? PostgreSqlErrorCode = null,
+    long? PhysicalLineStart = null,
+    long? PhysicalLineEnd = null,
+    string? SourceColumn = null,
+    string? DestinationType = null,
+    string? TransferStrategy = null);
 public sealed record TransferProgress(long RowsProcessed, long RowsSucceeded, long RowsRejected, long? BytesProcessed, string Phase, TimeSpan Elapsed);
 
 public static class DataFormatDetector

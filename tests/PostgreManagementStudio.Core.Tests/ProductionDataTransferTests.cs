@@ -45,6 +45,9 @@ public sealed class ProductionDataTransferTests
             Assert.Equal('|', inspection.Format.Delimiter);
             Assert.Single(preview.Records);
             Assert.Equal("line one\r\nline two", preview.Records[0].Fields[1].Value);
+            Assert.Equal(2, inspection.EstimatedRows);
+            Assert.Equal(2, preview.Records[0].PhysicalLineStart);
+            Assert.Equal(3, preview.Records[0].PhysicalLineEnd);
             Assert.True(preview.IsBoundedSample);
         }
         finally { File.Delete(path); }
@@ -133,6 +136,29 @@ public sealed class ProductionDataTransferTests
     }
 
     [Fact]
+    public void UnsafeComplexTypesFallBackToValidatedTypedBatches()
+    {
+        var mappings = new[]
+        {
+            new ColumnMapping(0, "id"),
+            new ColumnMapping(1, "payload"),
+            new ColumnMapping(2, "labels"),
+        };
+        var columns = new[]
+        {
+            new DestinationColumn("id", "integer", false),
+            new DestinationColumn("payload", "jsonb", false),
+            new DestinationColumn("labels", "text[]", true),
+        };
+
+        Assert.Equal(ImportStrategy.BatchInsert,
+            ImportStrategySelector.Select(ImportStrategy.Copy, mappings, columns));
+        Assert.False(ImportStrategySelector.IsCertifiedForBinaryCopy("jsonb"));
+        Assert.False(ImportStrategySelector.IsCertifiedForBinaryCopy("text[]"));
+        Assert.True(ImportStrategySelector.IsCertifiedForBinaryCopy("numeric(12,2)"));
+    }
+
+    [Fact]
     public void BuildsQuotedPostgreSqlCreateTableAndValidatesIdentifiers()
     {
         var sql = NewTableSqlBuilder.Build("Mixed Schema", "order",
@@ -160,6 +186,7 @@ public sealed class ProductionDataTransferTests
                     "bad \"number\"", "22P02"),
             ]);
             var text = await File.ReadAllTextAsync(path);
+            Assert.Contains("logical_row,physical_line_start,physical_line_end", text);
             Assert.Contains("\"bad \"\"number\"\"\"", text);
             Assert.DoesNotContain("Password=", text, StringComparison.OrdinalIgnoreCase);
             Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(path)!,

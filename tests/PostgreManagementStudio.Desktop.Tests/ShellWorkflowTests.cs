@@ -96,6 +96,68 @@ public sealed class ShellWorkflowTests
 
     [Fact]
     [Trait("Category", "UiIntegration")]
+    [Trait("Priority", "P0")]
+    public void Sprint62_ComposedDescriptionReplacesSimpleWildcardAsOneUndoableEdit()
+    {
+        RunSta((window, _) =>
+        {
+            window.Show();
+            window.UpdateLayout();
+            var view = LogicalDescendants(window).OfType<QueryTabView>().Single();
+            var editor = LogicalDescendants(view).OfType<TextBox>()
+                .Single(box => AutomationProperties.GetName(box) == "SQL editor");
+            const string original = "SELECT * FROM public.orders;";
+            editor.Text = original;
+            editor.CaretIndex = original.IndexOf("orders", StringComparison.Ordinal);
+            var reference = new EditorObjectResolver().Resolve(
+                editor.Text, editor.CaretIndex, 0, 0)!;
+            Assert.Null(reference.RelationAlias);
+            var identity = new PostgresObjectIdentity
+            {
+                ConnectionProfileId = "test",
+                ConfigurationIdentity = "config",
+                ServerFingerprint = "server",
+                DatabaseOid = 1,
+                ObjectOid = 2,
+                ObjectClass = PostgresObjectClass.Table,
+                NameSnapshot = "orders",
+            };
+            var candidate = new ObjectDescriptionCandidate(
+                identity, "\"public\".\"orders\"", "Table", "owner", null, false, true);
+            var columns = new[]
+            {
+                new ObjectDescriptionColumn(1, "order_id", "bigint", false, null, "", null,
+                    null, true, true, false, null, null),
+                new ObjectDescriptionColumn(2, "status", "text", false, null, "", null,
+                    null, false, false, false, null, null),
+            };
+            view.BindDescription(reference, new(candidate, "Permanent", null, null, null,
+                null, null, columns, "", null));
+
+            view.ReplaceDescriptionWildcard();
+
+            Assert.Equal(
+                "SELECT \n    order_id,\n    status FROM public.orders;",
+                editor.Text);
+            editor.Undo();
+            Assert.Equal(original, editor.Text);
+            editor.Redo();
+            Assert.Equal(
+                "SELECT \n    order_id,\n    status FROM public.orders;",
+                editor.Text);
+
+            view.BindDescription(reference, new(candidate, "Permanent", null, null, null,
+                null, null, columns, "", null));
+            editor.AppendText(" ");
+            var changed = editor.Text;
+            Assert.Throws<InvalidOperationException>(() => view.ReplaceDescriptionWildcard());
+            Assert.Equal(changed, editor.Text);
+            view.Document.MarkDirty(false);
+        });
+    }
+
+    [Fact]
+    [Trait("Category", "UiIntegration")]
     public void TraditionalShell_IsReachableAtSupportedWindowSizes()
     {
         RunSta((window, provider) =>

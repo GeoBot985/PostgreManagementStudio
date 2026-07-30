@@ -235,7 +235,11 @@ public sealed class DataTransferWorkspaceWindow : Window
         _mappingMode.ItemsSource = Enum.GetValues<ImportMappingMode>();
         _mappingMode.SelectedItem = ImportMappingMode.CaseInsensitiveName;
         _mappingMode.SelectionChanged += (_, _) => ApplyAutomaticMapping();
-        _strategy.ItemsSource = new[] { "Fast bulk import (COPY FROM STDIN)", "Row-by-row validated import" };
+        _strategy.ItemsSource = new[]
+        {
+            "Automatic fast import (safe COPY with typed fallback)",
+            "Validated typed import using parameterised batches",
+        };
         _strategy.SelectedIndex = 0;
         _transaction.ItemsSource = new[]
         {
@@ -727,7 +731,7 @@ public sealed class DataTransferWorkspaceWindow : Window
             return Invalid("Batch size must be a positive integer.");
         if (!int.TryParse(_errorLimit.Text, out var limit) || limit <= 0)
             return Invalid("Maximum errors must be a positive integer.");
-        if (_errorMode.SelectedIndex == 1 && _strategy.SelectedIndex == 0)
+        if (_errorMode.SelectedIndex == 1 && EffectiveImportStrategy() == ImportStrategy.Copy)
             return Invalid("Collect-errors mode requires row-by-row validated import.");
         return true;
     }
@@ -753,7 +757,7 @@ public sealed class DataTransferWorkspaceWindow : Window
             _newTable.IsChecked == true ? ImportDestinationMode.CreateNewTable
                 : ImportDestinationMode.ExistingTable,
             CurrentMappings(), destinationColumns,
-            _strategy.SelectedIndex == 0 ? ImportStrategy.Copy : ImportStrategy.BatchInsert,
+            EffectiveImportStrategy(),
             _transaction.SelectedIndex == 0 ? TransactionMode.AllRows : TransactionMode.PerBatch,
             _errorMode.SelectedIndex == 1,
             _destinationMetadata?.HasCreatePermission ?? true,
@@ -766,7 +770,8 @@ public sealed class DataTransferWorkspaceWindow : Window
             + $"Destination: {_database} / {_schema.Text}.{_table.Text} "
             + $"({(_newTable.IsChecked == true ? "create new table" : "existing table")})\r\n"
             + $"Estimated rows: {_inspection?.EstimatedRows:N0}\r\n"
-            + $"Strategy: {_strategy.SelectedItem}\r\nTransaction: {_transaction.SelectedItem}\r\n"
+            + $"Strategy: {ImportStrategySelector.DisplayName(EffectiveImportStrategy())}\r\n"
+            + $"Requested mode: {_strategy.SelectedItem}\r\nTransaction: {_transaction.SelectedItem}\r\n"
             + $"Errors: {_errorMode.SelectedItem}; limit {_errorLimit.Text}; rejected file {_rejectedPath.Text}\r\n"
             + $"Mappings:\r\n{string.Join("\r\n", _mappings.Select(row =>
                 $"  {(row.Included ? "Include" : "Exclude")} {row.SourceName} → {row.DestinationName ?? "<unmapped>"} ({row.DestinationType})"))}\r\n"
@@ -837,7 +842,7 @@ public sealed class DataTransferWorkspaceWindow : Window
                 SelectedEncoding(), _header.IsChecked == true, _nullMarker.Text,
                 _trim.IsChecked == true),
             new(
-                _strategy.SelectedIndex == 0 ? ImportStrategy.Copy : ImportStrategy.BatchInsert,
+                EffectiveImportStrategy(),
                 ExistingDataMode.Append,
                 _transaction.SelectedIndex == 0 ? TransactionMode.AllRows : TransactionMode.PerBatch,
                 int.Parse(_batchSize.Text),
@@ -860,7 +865,8 @@ public sealed class DataTransferWorkspaceWindow : Window
                     ParenthesesAreNegative: row.ParenthesesAreNegative,
                     InvalidValueMode: row.SubstituteInvalidWithNull
                         ? InvalidValueMode.SubstituteNull : InvalidValueMode.RejectRow,
-                    TimeZoneAssumption: EmptyToNull(row.TimeZoneAssumption))));
+                    TimeZoneAssumption: EmptyToNull(row.TimeZoneAssumption))),
+            _previewData?.Headers);
         var progress = new Progress<ImportProgress>(value =>
         {
             var throughput = value.Elapsed is { TotalSeconds: > 0 } elapsed
@@ -875,6 +881,7 @@ public sealed class DataTransferWorkspaceWindow : Window
             _connectionString, request, progress, cancellationToken);
         _resultText.Text =
             $"{result.Status}\r\nDestination: {_schema.Text}.{_table.Text}\r\n"
+            + $"Strategy: {ImportStrategySelector.DisplayName(request.Options.Strategy)}\r\n"
             + $"Rows read: {result.RowsRead:N0}\r\nRows imported: {result.RowsWritten:N0}\r\n"
             + $"Rows rejected: {result.RowsRejected:N0}\r\nRows skipped: {result.RowsSkipped:N0}\r\n"
             + $"Elapsed: {result.Elapsed:g}\r\nTransaction: "
@@ -888,6 +895,12 @@ public sealed class DataTransferWorkspaceWindow : Window
             $"{_schema.Text}.{_table.Text}", result.Status, result.RowsRead,
             result.RowsWritten, result.RowsRejected, result.RejectedRowsPath, result.Errors));
     }
+
+    private ImportStrategy EffectiveImportStrategy() =>
+        ImportStrategySelector.Select(
+            _strategy.SelectedIndex == 0 ? ImportStrategy.Copy : ImportStrategy.BatchInsert,
+            CurrentMappings(),
+            CurrentDestinationColumns());
 
     private async Task ExecuteExportAsync(DateTimeOffset started, CancellationToken cancellationToken)
     {
