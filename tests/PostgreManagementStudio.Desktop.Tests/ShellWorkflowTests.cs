@@ -158,6 +158,33 @@ public sealed class ShellWorkflowTests
 
     [Fact]
     [Trait("Category", "UiIntegration")]
+    [Trait("Priority", "P0")]
+    public void Sprint62_ShellStateIgnoresDisposedResultDuringSessionHandoff()
+    {
+        RunSta((window, _) =>
+        {
+            var view = LogicalDescendants(window).OfType<QueryTabView>().Single();
+            typeof(QueryTabView).GetField("_session", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(view, new DisposedResultSession());
+            typeof(QueryDocument).GetProperty(nameof(QueryDocument.LastExecutionContext))!
+                .SetValue(view.Document, new QueryExecutionContextSnapshot(
+                    Guid.NewGuid(), view.Document.TabId, "test", "localhost:5432",
+                    "postgres", "tester", "Prefer", QueryTransactionMode.Implicit,
+                    "select 1", DateTimeOffset.UtcNow));
+
+            Assert.False(view.HasResults);
+            Assert.Equal(0, view.RowsReceived);
+            Assert.Equal(0, view.RowsAffected);
+            Assert.Null(view.ExecutionElapsed);
+            var update = typeof(MainWindow).GetMethod(
+                "UpdateShellState", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var failure = Record.Exception(() => update.Invoke(window, null));
+            Assert.Null(failure);
+        });
+    }
+
+    [Fact]
+    [Trait("Category", "UiIntegration")]
     public void TraditionalShell_IsReachableAtSupportedWindowSizes()
     {
         RunSta((window, provider) =>
@@ -573,6 +600,26 @@ public sealed class ShellWorkflowTests
             Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.Background);
             Thread.Sleep(10);
         }
+    }
+
+    private sealed class DisposedResultSession : IResultSession
+    {
+        private static ObjectDisposedResultStoreException Disposed() =>
+            new("Synthetic disposed result session.");
+
+        public Guid Id { get; } = Guid.NewGuid();
+        public ResultSessionStatus Status => ResultSessionStatus.Disposed;
+        public IReadOnlyList<IResultSetStore> ResultSets => throw Disposed();
+        public IReadOnlyList<DatabaseNotice> Notices => throw Disposed();
+        public DatabaseError? Error => throw Disposed();
+        public TimeSpan? Elapsed => throw Disposed();
+        public long EstimatedMemoryBytes => throw Disposed();
+        public long ReceivedRowCount => throw Disposed();
+        public long RetainedRowCount => throw Disposed();
+        public long RowsAffected => throw Disposed();
+        public bool WasTruncated => throw Disposed();
+        public ResultTruncationReason? TruncationReason => throw Disposed();
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private static IEnumerable<DependencyObject> LogicalDescendants(DependencyObject root)

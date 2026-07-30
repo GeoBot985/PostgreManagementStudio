@@ -132,7 +132,7 @@ public partial class QueryTabView : UserControl
     public Guid RecoveryId => _recoveryId;
     public ShellConnectionInfo? Connection => _connection;
     public bool IncludeActualPlan { get; set; }
-    public bool HasResults => _session?.ResultSets.Count > 0;
+    public bool HasResults => ReadStatusSession(session => session.ResultSets.Count > 0, false);
     public bool IsExecuting => _document.IsExecuting || _backupController.CanCancel;
     private bool IsRecoveryConnected => _connection?.Session.Snapshot.State == RecoveryConnectionState.Connected;
     public bool CanExecute => _document.CanExecute && IsRecoveryConnected && !_backupController.CanCancel;
@@ -153,11 +153,13 @@ public partial class QueryTabView : UserControl
     public string QueryStatus => _document.BackendStateMayBeStale && IsRecoveryConnected
         ? $"{_document.Message} Backend-session state may be stale."
         : _document.Message;
-    public long RowsReceived => _session?.ReceivedRowCount ?? 0;
-    public long RowsAffected => _session?.RowsAffected ?? 0;
+    public long RowsReceived => ReadStatusSession(session => session.ReceivedRowCount, 0L);
+    public long RowsAffected => ReadStatusSession(session => session.RowsAffected, 0L);
     public TimeSpan? ExecutionElapsed => _document.LastExecutionContext is not { } context
         ? null
-        : _document.IsExecuting ? DateTimeOffset.UtcNow - context.StartedAt : _session?.Elapsed;
+        : _document.IsExecuting
+            ? DateTimeOffset.UtcNow - context.StartedAt
+            : ReadStatusSession(session => session.Elapsed, null);
     public (int Line, int Column) CaretPosition
     {
         get
@@ -169,6 +171,22 @@ public partial class QueryTabView : UserControl
                 if (SqlText.Text[index] == '\n') { line++; lastBreak = index; }
             return (line, length - lastBreak);
         }
+    }
+
+    private T ReadStatusSession<T>(Func<IResultSession, T> read, T fallback)
+    {
+        var documentSession = _document.Session;
+        if (documentSession is not null)
+        {
+            try { return read(documentSession); }
+            catch (ObjectDisposedResultStoreException) { }
+        }
+        if (_session is not null && !ReferenceEquals(_session, documentSession))
+        {
+            try { return read(_session); }
+            catch (ObjectDisposedResultStoreException) { }
+        }
+        return fallback;
     }
 
     public void ApplyConnection(ShellConnectionInfo? connection, string? databaseOverride = null)
