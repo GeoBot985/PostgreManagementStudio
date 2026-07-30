@@ -1,5 +1,12 @@
 # Sprint 61 defect register
 
+> Sprint 62 disposition: the product defects `S61-C01`, `S61-C02`,
+> `S61-H01`, `S61-M01`, and `S61-M02` are closed in `0.9.0-rc.4`.
+> `S61-RC01`, `S61-RC02`, and `S61-RC03` remain release-qualification
+> blockers. Root causes, fixes, tests, packaged results, and limitations are
+> recorded in
+> [`../sprint-62/DEFECT_CLOSURE.md`](../sprint-62/DEFECT_CLOSURE.md).
+
 ## S61-C01 — Packaged simple wildcard replacement cannot find wildcard
 
 - **Severity:** Critical
