@@ -863,8 +863,31 @@ public partial class QueryTabView : UserControl
     {
         if (_session is null || ResultTabs.SelectedIndex < 0 || ResultTabs.SelectedIndex >= _session.ResultSets.Count) { MessagesText.Text = "Execute a query with a result set before exporting."; OutputTabs.SelectedIndex = 1; return Task.CompletedTask; }
         if (_transferWorkspace is { IsVisible: true }) { _transferWorkspace.Activate(); return Task.CompletedTask; }
-        _transferWorkspace = new DataTransferWorkspaceWindow(DataTransferWorkspaceMode.Export, _transferHistory, CurrentConnectionString(), exportService: _resultExport, resultSet: _session.ResultSets[ResultTabs.SelectedIndex]) { Owner = Window.GetWindow(this) };
+        var state = (ResultTabs.Items[ResultTabs.SelectedIndex] as TabItem)?.Tag as ResultTabState;
+        var selection = state is null ? null : CurrentResultSelection(state);
+        _transferWorkspace = new DataTransferWorkspaceWindow(DataTransferWorkspaceMode.Export, _transferHistory, CurrentConnectionString(), exportService: _resultExport, resultSet: _session.ResultSets[ResultTabs.SelectedIndex], resultSelection: selection) { Owner = Window.GetWindow(this) };
         _transferWorkspace.Closed += (_, _) => _transferWorkspace = null; _transferWorkspace.Show(); return Task.CompletedTask;
+    }
+    public Task OpenRelationExportWorkspaceAsync(TransferRelationSource source)
+    {
+        if (!IsRecoveryConnected) { MessagesText.Text = "Reconnect before exporting relation data."; OutputTabs.SelectedIndex = 1; return Task.CompletedTask; }
+        if (_transferWorkspace is { IsVisible: true }) { _transferWorkspace.Activate(); return Task.CompletedTask; }
+        _transferWorkspace = new DataTransferWorkspaceWindow(DataTransferWorkspaceMode.Export,
+            _transferHistory, CurrentConnectionString(), relationSource: source)
+            { Owner = Window.GetWindow(this) };
+        _transferWorkspace.Closed += (_, _) => _transferWorkspace = null;
+        _transferWorkspace.Show();
+        return Task.CompletedTask;
+    }
+    private static ResultSelection? CurrentResultSelection(ResultTabState state)
+    {
+        var cells = state.Grid.SelectedCells
+            .Where(cell => cell.Item is FormattedResultRow && cell.Column.DisplayIndex > 0)
+            .Select(cell => (Row: ((FormattedResultRow)cell.Item).RowIndex,
+                Column: cell.Column.DisplayIndex - 1)).ToArray();
+        if (cells.Length == 0) return null;
+        return new(cells.Min(cell => cell.Row), cells.Max(cell => cell.Row),
+            cells.Min(cell => cell.Column), cells.Max(cell => cell.Column));
     }
     public async Task ExportResultsAsync()
     {
@@ -1050,11 +1073,11 @@ public partial class QueryTabView : UserControl
     public async Task ShowSecurityRolesAsync() { try { var roles = await new NpgsqlSecurityService().LoadRolesAsync(CurrentConnectionString()); MessagesText.Text = string.Join(Environment.NewLine, roles.Select(r => $"{UntrustedText.ForDisplay(r.Name)} {(r.CanLogin ? "LOGIN" : "GROUP")} {(r.IsSuperuser ? "SUPERUSER" : "")}")); StatusText.Text = $"Loaded {roles.Count:N0} roles."; OutputTabs.SelectedIndex = 1; } catch (Exception ex) { MessagesText.Text = SecretRedactor.Redact(ex.Message); StatusText.Text = "Security metadata unavailable."; OutputTabs.SelectedIndex = 1; } }
     public async Task ShowActivityMonitorAsync() { try { var snapshot = await new NpgsqlActivityService().LoadSnapshotAsync(CurrentConnectionString(), DateTime.UtcNow.Ticks); ResultSummary.Text = $"Sessions {snapshot.Summary.TotalSessions:N0} · Active {snapshot.Summary.ActiveSessions:N0} · Idle {snapshot.Summary.IdleSessions:N0} · Blocked {snapshot.Summary.BlockedSessions:N0}"; MessagesText.Text = string.Join(Environment.NewLine, snapshot.Sessions.Select(s => UntrustedText.ForDisplay($"{s.ProcessId} {s.ClassifiedState} {s.Database} {s.User} {s.Duration:g} {s.Query}", 2_048))); StatusText.Text = $"Activity snapshot {snapshot.ServerTime:O}"; OutputTabs.SelectedIndex = 1; } catch (Exception ex) { MessagesText.Text = SecretRedactor.Redact(ex.Message); StatusText.Text = "Activity monitor unavailable."; OutputTabs.SelectedIndex = 1; } }
     public async Task RunMaintenanceAsync() { try { var cs = CurrentConnectionString(); var connection = DatabaseConnection.FromConnectionString(cs) with { Database = DatabaseText.Text }; if (Connection?.Configuration.Profile.EffectiveReadOnly == true) throw new InvalidOperationException("Maintenance is disabled because this session is configured read-only."); var plan = new MaintenancePlan(MaintenanceOperation.Vacuum, new[] { new MaintenanceTarget(MaintenanceTargetKind.Database, connection.Database) }, new(Analyze: true, Verbose: true), new(18)); var sql = string.Join(Environment.NewLine, plan.Statements); if (!_destructiveOperations.Confirm(new(DestructiveOperationKind.Maintenance, "Maintenance confirmation", connection.Database, $"Run maintenance on a dedicated connection? This may take time and hold locks.{Environment.NewLine}{Environment.NewLine}{sql}", "Cancel before confirmation or wait for PostgreSQL to finish safely.", connection.Host, connection.Database, connection.Database, Connection?.Configuration.Profile.EnvironmentDisplayName, Connection?.Session.Snapshot.State == RecoveryConnectionState.Connected))) return; MessagesText.Text = sql; OutputTabs.SelectedIndex = 1; var result = await new NpgsqlMaintenanceService().ExecuteAsync(cs, plan, new Progress<string>(x => MessagesText.AppendText(x + Environment.NewLine))); StatusText.Text = result.Status; } catch (Exception ex) { MessagesText.Text = SecretRedactor.Redact(ex.Message); StatusText.Text = "Maintenance unavailable."; OutputTabs.SelectedIndex = 1; } }
-    public Task OpenImportWorkspaceAsync()
+    public Task OpenImportWorkspaceAsync(TransferRelationSource? target = null)
     {
         if (!IsRecoveryConnected) { MessagesText.Text = "Reconnect before opening the import workspace."; OutputTabs.SelectedIndex = 1; return Task.CompletedTask; }
         if (_transferWorkspace is { IsVisible: true }) { _transferWorkspace.Activate(); return Task.CompletedTask; }
-        _transferWorkspace = new DataTransferWorkspaceWindow(DataTransferWorkspaceMode.Import, _transferHistory, CurrentConnectionString(), importService: _dataTransfer) { Owner = Window.GetWindow(this) };
+        _transferWorkspace = new DataTransferWorkspaceWindow(DataTransferWorkspaceMode.Import, _transferHistory, CurrentConnectionString(), importService: _dataTransfer, relationSource: target) { Owner = Window.GetWindow(this) };
         _transferWorkspace.Closed += (_, _) => _transferWorkspace = null; _transferWorkspace.Show(); return Task.CompletedTask;
     }
 

@@ -65,6 +65,9 @@
       </MenuItem>
       <MenuItem Header="_Database">
         <MenuItem Header="_Import Data…" Command="{x:Static local:ShellCommands.ImportData}"/>
+        <MenuItem Header="_Export Data…" Command="{x:Static local:ShellCommands.ExportResults}"
+                  ToolTip="Exports the active query result; use Object Explorer Tasks to export a table or view."/>
+        <Separator/>
         <MenuItem Header="_Backup…" Command="{x:Static local:ShellCommands.Backup}"/>
         <MenuItem Header="_Restore…" Command="{x:Static local:ShellCommands.Restore}"/>
         <MenuItem Header="_Maintenance…" Command="{x:Static local:ShellCommands.Maintenance}"/>
@@ -153,6 +156,7 @@
           </Border>
       <TreeView x:Name="ObjectExplorerTree" ContextMenuOpening="ObjectExplorerTree_ContextMenuOpening"
                 PreviewMouseRightButtonDown="ObjectExplorerTree_PreviewMouseRightButtonDown"
+                SelectedItemChanged="ObjectExplorerTree_SelectedItemChanged"
                 PreviewKeyDown="ObjectExplorerTree_PreviewKeyDown">
             <TreeView.ContextMenu>
               <ContextMenu/>

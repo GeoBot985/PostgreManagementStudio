@@ -83,6 +83,9 @@ public static class ProductionServices
         services.AddTransient<ResultViewTransformationService>();
         services.AddTransient<NpgsqlActivityService>();
         services.AddTransient<NpgsqlDataTransferService>();
+        services.AddTransient<ITransferMetadataProvider, NpgsqlTransferMetadataProvider>();
+        services.AddTransient<IRelationExportService, NpgsqlRelationExportService>();
+        services.AddTransient<ProductionDelimitedFileInspector>();
         services.AddTransient<NpgsqlExecutionPlanService>();
         services.AddTransient<NpgsqlMaintenanceService>();
         services.AddTransient<NpgsqlObjectSearchService>();

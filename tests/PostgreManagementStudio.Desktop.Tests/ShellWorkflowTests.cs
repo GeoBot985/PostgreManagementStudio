@@ -333,7 +333,7 @@ public sealed class ShellWorkflowTests
 
     [Fact]
     [Trait("Category", "UiIntegration")]
-    public void Sprint53_TransferWorkspacesExposeImportMappingAndExportReviewSurfaces()
+    public void Sprint60_TransferWorkspacesUseTraditionalAccessibleWizardNavigation()
     {
         RunSta((window, provider) =>
         {
@@ -346,13 +346,19 @@ public sealed class ShellWorkflowTests
                 exportService: provider.GetRequiredService<IResultExportService>());
 
             Assert.Equal("Import data into PostgreSQL", import.Title);
-            Assert.Contains(LogicalDescendants(import).OfType<DataGrid>(), grid => grid.Columns.Count >= 4);
-            Assert.Contains(LogicalDescendants(import).OfType<Button>(), button => button.Content?.ToString() == "Validate plan");
+            Assert.Contains(LogicalDescendants(import).OfType<ListBox>(),
+                list => AutomationProperties.GetName(list) == "Wizard steps" && list.Items.Count == 9);
+            Assert.Contains(LogicalDescendants(import).OfType<Button>(), button => button.Content?.ToString() == "_Back");
+            Assert.Contains(LogicalDescendants(import).OfType<Button>(), button => button.Content?.ToString() == "_Next");
+            Assert.Contains(LogicalDescendants(import).OfType<Button>(), button => button.Content?.ToString() == "_Finish");
             Assert.Contains(LogicalDescendants(import).OfType<Button>(), button => button.Content?.ToString() == "Cancel");
             Assert.Equal("Export query result", export.Title);
-            Assert.Contains(LogicalDescendants(export).OfType<ComboBox>(), combo => combo.Items.Count >= 4);
-            Assert.Contains(LogicalDescendants(export).OfType<CheckBox>(), check => check.Content?.ToString() == "Include headers");
-            Assert.Contains(LogicalDescendants(export).OfType<DataGrid>(), grid => grid.Columns.Count >= 5);
+            Assert.Contains(LogicalDescendants(export).OfType<ListBox>(),
+                list => AutomationProperties.GetName(list) == "Wizard steps" && list.Items.Count == 8);
+            Assert.Contains(LogicalDescendants(export).OfType<TextBlock>(),
+                text => text.Text.Contains("streams data through the active connection"));
+            Assert.Contains(LogicalDescendants(import).OfType<TextBlock>(),
+                text => AutomationProperties.GetName(text) == "Validation summary");
             import.Close();
             export.Close();
         });
@@ -435,6 +441,9 @@ public sealed class ShellWorkflowTests
             var menu = Assert.IsType<ContextMenu>(tree.ContextMenu);
             Assert.Contains(menu.Items.OfType<MenuItem>(), x => Equals(x.Header, "Script Object as"));
             Assert.Contains(menu.Items.OfType<MenuItem>(), x => x.Header?.ToString()?.StartsWith("Select Top") == true);
+            Assert.Contains(menu.Items.OfType<MenuItem>(), x => Equals(x.Header, "Tasks"));
+            var tasks = menu.Items.OfType<MenuItem>().Single(x => Equals(x.Header, "Tasks"));
+            Assert.Contains(tasks.Items.OfType<MenuItem>(), x => Equals(x.Header, "Export Data…"));
             Assert.Contains(menu.Items.OfType<MenuItem>(), x => Equals(x.Header, "Copy Qualified Name"));
             Assert.False(menu.Items.OfType<MenuItem>().Single(x => Equals(x.Header, "Script Object as")).IsEnabled);
         });

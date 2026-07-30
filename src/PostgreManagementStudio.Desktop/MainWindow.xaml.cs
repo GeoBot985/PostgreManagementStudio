@@ -49,6 +49,7 @@ public partial class MainWindow : Window
     private int _statusTicks;
     private int _healthCheckRunning;
     private ObjectExplorerContext? _objectExplorerContext;
+    private TreeViewItem? _selectedObjectExplorerItem;
 
     public MainWindow(
         QueryTabManager tabs,
@@ -489,6 +490,18 @@ public partial class MainWindow : Window
         BuildObjectExplorerContextMenu();
     }
 
+    private void ObjectExplorerTree_SelectedItemChanged(
+        object sender, RoutedPropertyChangedEventArgs<object> e)
+    {
+        _selectedObjectExplorerItem = e.NewValue as TreeViewItem;
+        _ = Dispatcher.BeginInvoke(() =>
+        {
+            _selectedObjectExplorerItem = FindSelectedItem(ObjectExplorerTree.Items)
+                ?? _selectedObjectExplorerItem;
+            BuildObjectExplorerContextMenu();
+        }, DispatcherPriority.Input);
+    }
+
     private async void ObjectExplorerTree_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key == Key.F5)
@@ -505,7 +518,7 @@ public partial class MainWindow : Window
             e.Handled = true;
             BuildObjectExplorerContextMenu();
             ObjectExplorerTree.ContextMenu!.PlacementTarget =
-                ObjectExplorerTree.SelectedItem is TreeViewItem selected ? selected : ObjectExplorerTree;
+                (UIElement?)SelectedObjectExplorerItem() ?? ObjectExplorerTree;
             ObjectExplorerTree.ContextMenu.IsOpen = true;
             return;
         }
@@ -542,7 +555,7 @@ public partial class MainWindow : Window
     {
         var menu = ObjectExplorerTree.ContextMenu!;
         menu.Items.Clear();
-        if (ObjectExplorerTree.SelectedItem is not TreeViewItem { Tag: ObjectExplorerNode node }) return;
+        if (SelectedObjectExplorerItem()?.Tag is not ObjectExplorerNode node) return;
         var sessionConnected = ActiveDocument is { ConnectionString.Length: > 0 }
             && ActiveView?.Connection?.Session.Snapshot.State == RecoveryConnectionState.Connected;
         var connected = sessionConnected && ActiveDocument is { } currentDocument
@@ -567,11 +580,26 @@ public partial class MainWindow : Window
         if (ObjectScriptService.Supports(node.Identity.ObjectClass, ObjectScriptKind.Select))
             menu.Items.Add(Item($"Select Top {_settings.DisplayedRowLimit} Rows",
                 (_, _) => _ = ObserveAsync(() => GenerateObjectScriptAsync(node, ObjectScriptKind.Select)), connected));
+        var readOnly = ActiveView?.Connection?.Configuration.Profile.EffectiveReadOnly == true;
+        var transfer = CreateTransferSource(node, readOnly);
+        if (transfer is not null)
+        {
+            var tasks = new MenuItem { Header = "Tasks" };
+            if (transfer.CanImport)
+                tasks.Items.Add(Item("Import Data…",
+                    (_, _) => _ = ObserveAsync(() => ActiveView!.OpenImportWorkspaceAsync(transfer)),
+                    connected && !readOnly));
+            if (transfer.CanExport)
+                tasks.Items.Add(Item("Export Data…",
+                    (_, _) => _ = ObserveAsync(() => ActiveView!.OpenRelationExportWorkspaceAsync(transfer)),
+                    connected));
+            tasks.IsEnabled = tasks.Items.Count > 0 && connected;
+            menu.Items.Add(tasks);
+        }
         menu.Items.Add(new Separator());
         menu.Items.Add(Item("Properties", (_, _) => _ = ObserveAsync(() => ShowObjectPropertiesAsync(node)),
             connected && ObjectScriptService.SupportsMetadata(node.Identity.ObjectClass)));
         menu.Items.Add(Item("Refresh", (_, _) => _ = ObserveAsync(() => RefreshSelectedObjectAsync(node)), connected));
-        var readOnly = ActiveView?.Connection?.Configuration.Profile.EffectiveReadOnly == true;
         if (_objectActions.CanRename(node.Identity.ObjectClass))
             menu.Items.Add(Item("Rename", (_, _) => _ = ObserveAsync(() => RenameObjectAsync(node)),
                 connected && node.CanModify && !readOnly));
@@ -582,6 +610,50 @@ public partial class MainWindow : Window
         menu.Items.Add(Item("Copy Name", (_, _) => Clipboard.SetText(node.RawName), connected));
         menu.Items.Add(Item("Copy Qualified Name", (_, _) =>
             Clipboard.SetText(node.QualifiedName ?? node.RawName), connected && !string.IsNullOrWhiteSpace(node.QualifiedName)));
+    }
+
+    private TreeViewItem? SelectedObjectExplorerItem()
+    {
+        if (ObjectExplorerTree.SelectedItem is TreeViewItem selected)
+            return selected;
+        if (_selectedObjectExplorerItem?.IsSelected == true)
+            return _selectedObjectExplorerItem;
+
+        var focused = Keyboard.FocusedElement as DependencyObject;
+        while (focused is not null && focused is not TreeViewItem)
+            focused = VisualTreeHelper.GetParent(focused);
+        if (focused is TreeViewItem focusedItem)
+            return focusedItem;
+
+        return FindSelectedItem(ObjectExplorerTree.Items);
+    }
+
+    private static TreeViewItem? FindSelectedItem(ItemCollection items)
+    {
+        foreach (var item in items.OfType<TreeViewItem>())
+        {
+            if (item.IsSelected) return item;
+            if (FindSelectedItem(item.Items) is { } nested) return nested;
+        }
+        return null;
+    }
+
+    private static TransferRelationSource? CreateTransferSource(
+        ObjectExplorerNode node, bool readOnly)
+    {
+        var import = node.Identity.ObjectClass is PostgresObjectClass.Table
+            or PostgresObjectClass.PartitionedTable or PostgresObjectClass.Partition
+            or PostgresObjectClass.ForeignTable;
+        var export = import || node.Identity.ObjectClass is PostgresObjectClass.View
+            or PostgresObjectClass.MaterializedView;
+        if (!import && !export) return null;
+        var qualified = node.QualifiedName;
+        if (string.IsNullOrWhiteSpace(qualified)) return null;
+        var reference = new EditorObjectResolver().Resolve(
+            qualified, qualified.Length, 0, qualified.Length);
+        if (reference is null || reference.NameParts.Count < 2) return null;
+        return new(reference.NameParts[^2], node.RawName, node.Kind.ToString(),
+            import && node.CanModify && !readOnly, export, qualified);
     }
 
     private static MenuItem Item(string header, RoutedEventHandler handler, bool enabled)

@@ -27,6 +27,11 @@ public sealed class ProductionCompositionTests
         Assert.IsType<NpgsqlObjectDescriptionMetadataProvider>(
             provider.GetRequiredService<IObjectDescriptionMetadataProvider>());
         Assert.NotNull(provider.GetRequiredService<ObjectDescriptionService>());
+        Assert.IsType<NpgsqlTransferMetadataProvider>(
+            provider.GetRequiredService<ITransferMetadataProvider>());
+        Assert.IsType<NpgsqlRelationExportService>(
+            provider.GetRequiredService<IRelationExportService>());
+        Assert.NotNull(provider.GetRequiredService<ProductionDelimitedFileInspector>());
         Assert.NotNull(provider.GetRequiredService<DestructiveOperationGuard>());
         Assert.IsType<WpfUserConfirmationService>(provider.GetRequiredService<IUserConfirmationService>());
         Assert.NotNull(provider.GetRequiredService<RecoverySnapshotService>());
