@@ -1,0 +1,4 @@
+id,external_id,payload,tags,mood,amount,occurred_at,local_stamp,notes,empty_text
+201,12345678-1234-5678-9abc-123456789201,"{""ok"":true}","{alpha}",calm,10.00,2026-07-30T12:00:00+02,2026-07-30 12:00:00,valid,
+202,12345678-1234-5678-9abc-123456789202,"{bad json","{beta}",focused,20.00,2026-07-30T13:00:00+02,2026-07-30 13:00:00,invalid,
+203,12345678-1234-5678-9abc-123456789203,"{""ok"":true}","{gamma}",busy,30.00,2026-07-30T14:00:00+02,2026-07-30 14:00:00,valid,

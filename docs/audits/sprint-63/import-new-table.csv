@@ -1,0 +1,4 @@
+leading_zero_id,display_name,amount,occurred_at,active,notes
+000101,Alpha,12.50,2026-07-30T12:00:00+02,true,"first line
+second line"
+000102,"Unicode Καλημέρα",0.01,2026-07-30T13:00:00+02,false,

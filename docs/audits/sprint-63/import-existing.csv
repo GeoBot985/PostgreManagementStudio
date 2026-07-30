@@ -1,0 +1,4 @@
+id,external_id,payload,tags,mood,amount,occurred_at,local_stamp,notes,empty_text
+101,12345678-1234-5678-9abc-123456789101,"{""name"":""CSV first"",""ok"":true}","{alpha,""comma,value""}",calm,123.45,2026-07-30T12:00:00+02,2026-07-30 12:00:00,"first line
+second line",
+102,12345678-1234-5678-9abc-123456789102,"{""name"":""Unicode Καλημέρα"",""ok"":true}","{unicode,βeta}",focused,0.01,2026-07-30T13:00:00+02,2026-07-30 13:00:00,\N,
