@@ -914,7 +914,7 @@ public partial class QueryTabView : UserControl
         for (var column = 0; column < store.Schema.Columns.Count; column++)
             view.Columns.Add(new DataGridTextColumn
             {
-                Header = $"{store.Schema.Columns[column].Name}\n{store.Schema.Columns[column].PostgreSqlTypeName}",
+                Header = store.Schema.Columns[column].Name,
                 Binding = new System.Windows.Data.Binding($"Values[{column}]"),
                 Width = new DataGridLength(1, DataGridLengthUnitType.Star),
                 MinWidth = 80,
