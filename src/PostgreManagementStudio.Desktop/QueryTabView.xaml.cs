@@ -1016,8 +1016,10 @@ public partial class QueryTabView : UserControl
         var unindent = System.Windows.Input.Keyboard.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Shift);
         var replacement = string.Join("\n", selected.Split('\n').Select(line =>
             unindent
-                ? line.StartsWith("    ", StringComparison.Ordinal) ? line[4..] : line.TrimStart().Length < line.Length ? line[1..] : line
-                : "    " + line));
+                ? line.StartsWith("\t", StringComparison.Ordinal) ? line[1..]
+                    : line.StartsWith("    ", StringComparison.Ordinal) ? line[4..]
+                    : line.TrimStart().Length < line.Length ? line[1..] : line
+                : "\t" + line));
         SqlText.Select(lineStart, lineEnd - lineStart);
         SqlText.SelectedText = replacement;
         SqlText.Select(lineStart, replacement.Length);
