@@ -111,10 +111,6 @@
         <Button Command="{x:Static local:ShellCommands.Reconnect}" ToolTip="Reconnect to PostgreSQL" AutomationProperties.Name="Reconnect"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE72C;"/></Button>
       </ToolBar>
       <ToolBar Band="1" BandIndex="0" Header="Query">
-        <Button x:Name="ConnectionButton" Command="{x:Static local:ShellCommands.ChangeConnection}" MinWidth="150"
-                ToolTip="Change the active query connection" AutomationProperties.Name="Active connection">
-          <TextBlock x:Name="ConnectionToolbarText" Text="Disconnected" TextTrimming="CharacterEllipsis"/>
-        </Button>
         <TextBlock Text="Database:" VerticalAlignment="Center" Margin="6,0,3,0"/>
         <ComboBox x:Name="DatabaseSelector" Width="130" IsEditable="True" IsTextSearchEnabled="True"
                   ToolTip="Database for the active query" AutomationProperties.Name="Active database"

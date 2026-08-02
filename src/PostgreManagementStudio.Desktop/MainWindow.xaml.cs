@@ -1071,7 +1071,6 @@ public partial class MainWindow : Window
         var doc = view?.Document;
         if (doc is null)
         {
-            ConnectionToolbarText.Text = "No active query";
             DatabaseSelector.Text = string.Empty;
             SetStatus("Disconnected", "—", "—", "—", "No active query", "—", (1, 1));
             return;
@@ -1082,9 +1081,6 @@ public partial class MainWindow : Window
         DatabaseSelector.IsEnabled = connected && !view!.IsExecuting;
         DatabaseSelector.Text = doc.Database;
         var connection = view.Connection;
-        ConnectionToolbarText.Text = connection is null
-            ? "Connect…"
-            : $"{connection.Configuration.Profile.Name} · {connection.Username}@{connection.Host}:{connection.Port} ({snapshot!.State})";
         var elapsed = view!.ExecutionElapsed;
         var query = view.IsExecuting
             ? $"{doc.State} · {elapsed?.ToString(@"hh\:mm\:ss") ?? "00:00:00"}"
