@@ -502,6 +502,7 @@ public partial class MainWindow : Window
         var direction = Math.Sign(e.Delta);
         if (direction == 0) return;
         _textZoom = Math.Clamp(_textZoom * (direction > 0 ? 1.05 : 1 / 1.05), 0.5, 2.0);
+        FontSize = 12 * _textZoom;
         ApplyTextZoom(this);
         e.Handled = true;
     }
@@ -547,7 +548,10 @@ public partial class MainWindow : Window
         {
             if (!_baseFontSizes.TryGetValue(root, out var baseSize))
             {
-                baseSize = TextElement.GetFontSize(root);
+                var localSize = root.ReadLocalValue(TextElement.FontSizeProperty);
+                baseSize = localSize is double explicitSize
+                    ? explicitSize
+                    : TextElement.GetFontSize(root) / _textZoom;
                 if (double.IsNaN(baseSize) || baseSize <= 0) baseSize = 12;
                 _baseFontSizes[root] = baseSize;
             }
