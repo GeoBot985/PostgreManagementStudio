@@ -1003,15 +1003,29 @@ public partial class QueryTabView : UserControl
 
     private void SqlText_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
-        if (e.Key != System.Windows.Input.Key.Tab || SqlText.SelectionLength == 0) return;
+        if (e.Key != System.Windows.Input.Key.Tab) return;
         var start = SqlText.SelectionStart;
         var end = start + SqlText.SelectionLength;
-        // A selection contained on one line should use normal TextBox Tab behavior.
-        // Only a selection spanning lines is treated as a block indentation command.
-        if (!SqlText.Text[start..end].Contains('\n')) return;
         var lineStart = start == 0 ? 0 : SqlText.Text.LastIndexOf('\n', start - 1) + 1;
         var lineEnd = end >= SqlText.Text.Length ? SqlText.Text.Length : SqlText.Text.IndexOf('\n', end);
         if (lineEnd < 0) lineEnd = SqlText.Text.Length;
+        if (System.Windows.Input.Keyboard.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Shift)
+            && !SqlText.Text[lineStart..lineEnd].Contains('\n'))
+        {
+            var line = SqlText.Text[lineStart..lineEnd];
+            var remove = line.StartsWith("\t", StringComparison.Ordinal) ? 1
+                : line.StartsWith("    ", StringComparison.Ordinal) ? 4 : 0;
+            if (remove == 0) return;
+            SqlText.Select(lineStart, line.Length);
+            SqlText.SelectedText = line[remove..];
+            SqlText.CaretIndex = Math.Max(lineStart, start - remove);
+            e.Handled = true;
+            return;
+        }
+        if (SqlText.SelectionLength == 0) return;
+        // A selection contained on one line should use normal TextBox Tab behavior.
+        // Only a selection spanning lines is treated as a block indentation command.
+        if (!SqlText.Text[start..end].Contains('\n')) return;
         var selected = SqlText.Text[lineStart..lineEnd];
         var unindent = System.Windows.Input.Keyboard.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Shift);
         var replacement = string.Join("\n", selected.Split('\n').Select(line =>
