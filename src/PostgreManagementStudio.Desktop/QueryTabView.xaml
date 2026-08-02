@@ -24,14 +24,14 @@
       </WrapPanel>
     </Border>
 
-    <TextBox x:Name="SqlText" Grid.Row="1" AcceptsReturn="True" AcceptsTab="True"
-             TextWrapping="NoWrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+    <local:SqlEditorControl x:Name="SqlText" Grid.Row="1"
+             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
              FontFamily="Consolas" FontSize="13" Padding="6"
              TextChanged="SqlText_TextChanged" SelectionChanged="SqlText_SelectionChanged"
              PreviewKeyDown="SqlText_PreviewKeyDown"
              AllowDrop="True" PreviewDragOver="SqlText_PreviewDragOver" Drop="SqlText_Drop"
              AutomationProperties.Name="SQL editor">
-      <TextBox.ContextMenu>
+      <local:SqlEditorControl.ContextMenu>
         <ContextMenu>
           <MenuItem Header="Undo" Command="ApplicationCommands.Undo"/>
           <MenuItem Header="Redo" Command="ApplicationCommands.Redo"/>
@@ -45,8 +45,8 @@
           <MenuItem Header="Describe Object" Command="{x:Static local:ShellCommands.DescribeObject}" InputGestureText="Alt+F1"/>
           <MenuItem Header="Display Estimated Plan" Command="{x:Static local:ShellCommands.EstimatedPlan}"/>
         </ContextMenu>
-      </TextBox.ContextMenu>
-    </TextBox>
+      </local:SqlEditorControl.ContextMenu>
+    </local:SqlEditorControl>
 
     <GridSplitter Grid.Row="2" Height="5" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
                   Background="#E5E5E5" ResizeDirection="Rows"/>

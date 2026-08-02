@@ -138,9 +138,7 @@ public partial class QueryTabView : UserControl
         var surface = Brush(dark ? "#252526" : "#F7F9FC");
         var foreground = Brush(dark ? "#DCDCDC" : "#172033");
         var accent = Brush(dark ? "#6B5CD6" : "#4A78B0");
-        SqlText.Background = editor;
-        SqlText.Foreground = foreground;
-        SqlText.CaretBrush = foreground;
+        SqlText.SetTheme(dark);
         OutputTabs.Background = surface;
         OutputTabs.Foreground = foreground;
         ResultTabs.Background = surface;
@@ -1046,7 +1044,7 @@ public partial class QueryTabView : UserControl
     private void CloseFind_Click(object sender, RoutedEventArgs e) { FindPanel.Visibility = Visibility.Collapsed; SqlText.Focus(); }
     private void ReplaceAll_Click(object sender, RoutedEventArgs e) { if (string.IsNullOrEmpty(FindText.Text)) return; var service = new FindReplaceService(); var result = service.ReplaceAll(SqlText.Text, FindText.Text, ReplaceText.Text, new(), out var count); if (count > 0) SqlText.Text = result; StatusText.Text = $"{count} replacements made."; }
     public void GoToLine() { var dialog = new InputDialog("Go to line", "Line number:"); if (dialog.ShowDialog() != true || !int.TryParse(dialog.Value, out var line) || line < 1) { StatusText.Text = "Enter a positive line number."; return; } var index = 0; for (var i = 1; i < line && index < SqlText.Text.Length; i++) index = SqlText.Text.IndexOf('\n', index) + 1; if (index <= 0 && line > 1) { StatusText.Text = "Line is beyond the document."; return; } SqlText.Focus(); SqlText.CaretIndex = index; }
-    private void SqlText_TextChanged(object sender, TextChangedEventArgs e)
+    private void SqlText_TextChanged(object sender, EventArgs e)
     {
         _document.SqlText = SqlText.Text;
         Interlocked.Increment(ref _documentVersion);

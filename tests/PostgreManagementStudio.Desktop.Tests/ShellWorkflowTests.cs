@@ -82,7 +82,7 @@ public sealed class ShellWorkflowTests
                 .Where(source => ReferenceEquals(source.Command, ShellCommands.DescribeObject))
                 .ToArray();
             Assert.NotEmpty(sources);
-            var editor = LogicalDescendants(window).OfType<TextBox>()
+            var editor = LogicalDescendants(window).OfType<SqlEditorControl>()
                 .Single(box => AutomationProperties.GetName(box) == "SQL editor");
             Assert.Contains(editor.ContextMenu!.Items.OfType<MenuItem>(),
                 item => ReferenceEquals(item.Command, ShellCommands.DescribeObject));
@@ -104,7 +104,7 @@ public sealed class ShellWorkflowTests
             window.Show();
             window.UpdateLayout();
             var view = LogicalDescendants(window).OfType<QueryTabView>().Single();
-            var editor = LogicalDescendants(view).OfType<TextBox>()
+            var editor = LogicalDescendants(view).OfType<SqlEditorControl>()
                 .Single(box => AutomationProperties.GetName(box) == "SQL editor");
             const string original = "SELECT * FROM public.orders;";
             editor.Text = original;
@@ -277,7 +277,7 @@ public sealed class ShellWorkflowTests
             var document = provider.GetRequiredService<QueryTabManager>().Documents.Single();
             var tabs = Assert.IsType<TabControl>(window.FindName("QueryTabs"));
             var view = Assert.IsType<QueryTabView>(Assert.IsType<TabItem>(tabs.SelectedItem).Content);
-            var editor = Assert.IsType<TextBox>(view.FindName("SqlText"));
+            var editor = Assert.IsType<SqlEditorControl>(view.FindName("SqlText"));
             Assert.Equal(snapshot.Text, editor.Text);
             Assert.Equal(snapshot.CaretOffset, editor.CaretIndex);
             Assert.Equal(snapshot.Database, document.Database);

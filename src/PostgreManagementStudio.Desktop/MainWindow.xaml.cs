@@ -1237,7 +1237,7 @@ public partial class MainWindow : Window
     {
         var item = new TreeViewItem
         {
-            Header = UntrustedText.ForDisplay(node.Name),
+            Header = CreateObjectExplorerHeader(node),
             ToolTip = UntrustedText.ForDisplay(node.Name, 4_096),
             Tag = node,
         };
@@ -1247,6 +1247,33 @@ public partial class MainWindow : Window
         item.Collapsed += TreeItem_Collapsed;
         if (expanded?.Contains(node.Identity) == true) item.IsExpanded = true;
         return item;
+    }
+
+    private static FrameworkElement CreateObjectExplorerHeader(ObjectExplorerNode node)
+    {
+        var (glyph, colour) = node.Kind switch
+        {
+            ObjectExplorerNodeKind.Database => ("\uE8B7", "#2EA043"),
+            ObjectExplorerNodeKind.Schema => ("\uE8B7", "#8E6BBE"),
+            ObjectExplorerNodeKind.Tables or ObjectExplorerNodeKind.Table => ("\uE80A", "#D6A52A"),
+            ObjectExplorerNodeKind.Views or ObjectExplorerNodeKind.View or ObjectExplorerNodeKind.MaterializedViews or ObjectExplorerNodeKind.MaterializedView => ("\uE890", "#4EA1D3"),
+            ObjectExplorerNodeKind.Column => ("\uE8A5", "#DCDCDC"),
+            ObjectExplorerNodeKind.Index => ("\uE8EC", "#D6A52A"),
+            ObjectExplorerNodeKind.Constraint => ("\uE72E", "#C586C0"),
+            ObjectExplorerNodeKind.Functions or ObjectExplorerNodeKind.Function or ObjectExplorerNodeKind.Procedures or ObjectExplorerNodeKind.Procedure => ("\uE943", "#569CD6"),
+            ObjectExplorerNodeKind.Sequences or ObjectExplorerNodeKind.Sequence => ("\uE9D2", "#4EC9B0"),
+            ObjectExplorerNodeKind.Types or ObjectExplorerNodeKind.EnumType or ObjectExplorerNodeKind.Domain or ObjectExplorerNodeKind.CompositeType => ("\uE8D2", "#CE9178"),
+            _ => ("\uE8B7", "#7A8A9E"),
+        };
+        var panel = new StackPanel { Orientation = Orientation.Horizontal };
+        panel.Children.Add(new TextBlock
+        {
+            FontFamily = new FontFamily("Segoe MDL2 Assets"), Text = glyph,
+            Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(colour)),
+            Width = 18, VerticalAlignment = VerticalAlignment.Center,
+        });
+        panel.Children.Add(new TextBlock { Text = UntrustedText.ForDisplay(node.Name), VerticalAlignment = VerticalAlignment.Center });
+        return panel;
     }
 
     private void Populate(TreeViewItem item, ObjectExplorerNode node, IReadOnlySet<PostgresObjectIdentity>? expanded = null)
