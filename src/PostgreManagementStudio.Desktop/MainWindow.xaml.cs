@@ -556,6 +556,9 @@ public partial class MainWindow : Window
         ObjectExplorerSplitter.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dark ? "#454545" : "#B7C9DF"));
         ShellStatusBar.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dark ? "#C7BA55" : "#FFF59D"));
         ShellStatusBar.Foreground = new SolidColorBrush(Color.FromRgb(32, 32, 32));
+        Resources[System.Windows.Documents.TextElement.ForegroundProperty] = foreground;
+        Resources[Control.ForegroundProperty] = foreground;
+        Resources[Control.BackgroundProperty] = surface;
         ApplyPopupMenuTheme(dark, background, surface, foreground, border);
         foreach (var view in QueryTabs.Items.OfType<TabItem>().Select(item => item.Content).OfType<QueryTabView>())
             view.ApplyTheme(dark);
