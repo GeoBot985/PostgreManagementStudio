@@ -399,6 +399,26 @@ public partial class QueryTabView : UserControl
                         var store = session.ResultSets[resultIndex];
                         ResultTabs.Items.Add(await CreateResultTabAsync(store, generationToken));
                     }
+                    if (session.ResultSets.Count == 0)
+                    {
+                        var label = session.RowsAffected == 1 ? "row affected" : "rows affected";
+                        ResultSummary.Text = $"{session.RowsAffected:N0} {label}";
+                        ResultTabs.Items.Add(new TabItem
+                        {
+                            Header = "Command",
+                            Content = new Border
+                            {
+                                Padding = new Thickness(18),
+                                Child = new TextBlock
+                                {
+                                    Text = $"Command completed successfully.\n\n{session.RowsAffected:N0} {label}.",
+                                    FontSize = 16,
+                                    FontWeight = FontWeights.SemiBold,
+                                    TextWrapping = TextWrapping.Wrap,
+                                },
+                            },
+                        });
+                    }
                     if (ResultTabs.Items.Count > 0) ResultTabs.SelectedIndex = 0;
                     if (session.WasTruncated) output.AppendLine($"Results truncated: displaying {session.RetainedRowCount:N0} of {session.ReceivedRowCount:N0} rows ({session.TruncationReason}).");
                     else if (session.ReceivedRowCount >= _settings.ResultWarningThreshold) output.AppendLine($"Large result warning: {session.ReceivedRowCount:N0} rows were loaded.");
@@ -411,7 +431,7 @@ public partial class QueryTabView : UserControl
                     await session.DisposeAsync();
             }
             MessagesText.Text = output.ToString();
-            OutputTabs.SelectedIndex = session?.Status == ResultSessionStatus.Completed && session.ResultSets.Count > 0 ? 0 : 1;
+            OutputTabs.SelectedIndex = session?.Status == ResultSessionStatus.Completed ? 0 : 1;
             StatusText.Text = _document.LastExecutionContext is { } context ? $"{_document.State} · {context.ServerIdentity} / {context.Database}" : _document.State.ToString();
         }
         catch (Exception ex) { StatusText.Text = "Error"; MessagesText.Text = SecretRedactor.Redact(ex.Message); }
