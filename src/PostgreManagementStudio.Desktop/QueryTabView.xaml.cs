@@ -1006,6 +1006,9 @@ public partial class QueryTabView : UserControl
         if (e.Key != System.Windows.Input.Key.Tab || SqlText.SelectionLength == 0) return;
         var start = SqlText.SelectionStart;
         var end = start + SqlText.SelectionLength;
+        // A selection contained on one line should use normal TextBox Tab behavior.
+        // Only a selection spanning lines is treated as a block indentation command.
+        if (!SqlText.Text[start..end].Contains('\n')) return;
         var lineStart = start == 0 ? 0 : SqlText.Text.LastIndexOf('\n', start - 1) + 1;
         var lineEnd = end >= SqlText.Text.Length ? SqlText.Text.Length : SqlText.Text.IndexOf('\n', end);
         if (lineEnd < 0) lineEnd = SqlText.Text.Length;
