@@ -130,6 +130,36 @@ public partial class QueryTabView : UserControl
 
     public QueryDocument Document => _document;
 
+    private double _editorZoom = 1.0;
+    private double _outputZoom = 1.0;
+
+    public void ApplySectionZoom(DependencyObject? source, double factor)
+    {
+        var editor = IsDescendant(source, SqlText);
+        var root = editor ? (DependencyObject)SqlText : OutputTabs;
+        if (editor) _editorZoom = Math.Clamp(_editorZoom * factor, 0.5, 2.0);
+        else _outputZoom = Math.Clamp(_outputZoom * factor, 0.5, 2.0);
+        ScaleSection(root, factor);
+    }
+
+    private static bool IsDescendant(DependencyObject? child, DependencyObject ancestor)
+    {
+        while (child is not null)
+        {
+            if (ReferenceEquals(child, ancestor)) return true;
+            child = System.Windows.Media.VisualTreeHelper.GetParent(child);
+        }
+        return false;
+    }
+
+    private static void ScaleSection(DependencyObject root, double factor)
+    {
+        var size = System.Windows.Documents.TextElement.GetFontSize(root);
+        if (!double.IsNaN(size) && size > 0) System.Windows.Documents.TextElement.SetFontSize(root, size * factor);
+        for (var index = 0; index < System.Windows.Media.VisualTreeHelper.GetChildrenCount(root); index++)
+            ScaleSection(System.Windows.Media.VisualTreeHelper.GetChild(root, index), factor);
+    }
+
     public void InsertDraggedColumn(ObjectExplorerNode node)
     {
         var text = node.QualifiedName ?? PostgreSqlIdentifierQuoter.Quote(node.RawName);

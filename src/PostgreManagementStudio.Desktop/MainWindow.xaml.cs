@@ -52,8 +52,7 @@ public partial class MainWindow : Window
     private ObjectExplorerContext? _objectExplorerContext;
     private TreeViewItem? _selectedObjectExplorerItem;
     private Point _objectExplorerDragStart;
-    private double _textZoom = 1.0;
-    private readonly Dictionary<DependencyObject, double> _baseFontSizes = [];
+    private double _objectExplorerZoom = 1.0;
     private bool _darkTheme;
 
     public MainWindow(
@@ -501,10 +500,39 @@ public partial class MainWindow : Window
         if (!Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) return;
         var direction = Math.Sign(e.Delta);
         if (direction == 0) return;
-        _textZoom = Math.Clamp(_textZoom * (direction > 0 ? 1.05 : 1 / 1.05), 0.5, 2.0);
-        FontSize = 12 * _textZoom;
-        ApplyTextZoom(this);
+        var factor = direction > 0 ? 1.05 : 1 / 1.05;
+        if (IsDescendantOf(e.OriginalSource as DependencyObject, ObjectExplorerTree))
+            ApplySectionZoom(ObjectExplorerTree, ref _objectExplorerZoom, factor);
+        else if (FindVisualParent<QueryTabView>(e.OriginalSource as DependencyObject) is { } view)
+            view.ApplySectionZoom(e.OriginalSource as DependencyObject, factor);
         e.Handled = true;
+    }
+
+    private static bool IsDescendantOf(DependencyObject? child, DependencyObject ancestor)
+    {
+        while (child is not null)
+        {
+            if (ReferenceEquals(child, ancestor)) return true;
+            child = VisualTreeHelper.GetParent(child);
+        }
+        return false;
+    }
+
+    private static void ApplySectionZoom(DependencyObject root, ref double zoom, double factor)
+    {
+        zoom = Math.Clamp(zoom * factor, 0.5, 2.0);
+        ScaleSection(root, factor);
+    }
+
+    private static void ScaleSection(DependencyObject root, double factor)
+    {
+        if (root is not Window)
+        {
+            var size = TextElement.GetFontSize(root);
+            if (!double.IsNaN(size) && size > 0) TextElement.SetFontSize(root, size * factor);
+        }
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+            ScaleSection(VisualTreeHelper.GetChild(root, index), factor);
     }
 
     private void LightTheme_Click(object sender, RoutedEventArgs e) => ApplyTheme(false);
@@ -542,24 +570,6 @@ public partial class MainWindow : Window
             ApplyThemeToVisual(VisualTreeHelper.GetChild(root, index), background, surface, foreground, border);
     }
 
-    private void ApplyTextZoom(DependencyObject root)
-    {
-        if (root is not Window)
-        {
-            if (!_baseFontSizes.TryGetValue(root, out var baseSize))
-            {
-                var localSize = root.ReadLocalValue(TextElement.FontSizeProperty);
-                baseSize = localSize is double explicitSize
-                    ? explicitSize
-                    : TextElement.GetFontSize(root) / _textZoom;
-                if (double.IsNaN(baseSize) || baseSize <= 0) baseSize = 12;
-                _baseFontSizes[root] = baseSize;
-            }
-            TextElement.SetFontSize(root, baseSize * _textZoom);
-        }
-        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
-            ApplyTextZoom(VisualTreeHelper.GetChild(root, index));
-    }
 
     private void ObjectExplorerTree_PreviewMouseMove(object sender, MouseEventArgs e)
     {
