@@ -561,6 +561,11 @@ public partial class MainWindow : Window
         Resources[System.Windows.Documents.TextElement.ForegroundProperty] = foreground;
         Resources[Control.ForegroundProperty] = foreground;
         Resources[Control.BackgroundProperty] = surface;
+        var treeItemStyle = new Style(typeof(TreeViewItem));
+        treeItemStyle.Setters.Add(new Setter(Control.ForegroundProperty, foreground));
+        treeItemStyle.Setters.Add(new Setter(Control.BackgroundProperty, Brushes.Transparent));
+        Resources[typeof(TreeViewItem)] = treeItemStyle;
+        ObjectExplorerTree.Foreground = foreground;
         ApplyPopupMenuTheme(dark, background, surface, foreground, border);
         foreach (var view in QueryTabs.Items.OfType<TabItem>().Select(item => item.Content).OfType<QueryTabView>())
             view.ApplyTheme(dark);
