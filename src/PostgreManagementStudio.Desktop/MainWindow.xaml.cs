@@ -689,6 +689,11 @@ public partial class MainWindow : Window
             tasks.IsEnabled = tasks.Items.Count > 0 && connected;
             menu.Items.Add(tasks);
         }
+        if (node.Kind == ObjectExplorerNodeKind.Table)
+        {
+            menu.Items.Add(Item("Create Index…", (_, _) => CreateIndexQuery(node),
+                connected && node.CanModify && !readOnly));
+        }
         menu.Items.Add(new Separator());
         menu.Items.Add(Item("Properties", (_, _) => _ = ObserveAsync(() => ShowObjectPropertiesAsync(node)),
             connected && ObjectScriptService.SupportsMetadata(node.Identity.ObjectClass)));
@@ -703,6 +708,23 @@ public partial class MainWindow : Window
         menu.Items.Add(Item("Copy Name", (_, _) => Clipboard.SetText(node.RawName), connected));
         menu.Items.Add(Item("Copy Qualified Name", (_, _) =>
             Clipboard.SetText(node.QualifiedName ?? node.RawName), connected && !string.IsNullOrWhiteSpace(node.QualifiedName)));
+    }
+
+    private void CreateIndexQuery(ObjectExplorerNode table)
+    {
+        var qualifiedTable = table.QualifiedName ?? PostgreSqlIdentifierQuoter.Quote(table.RawName);
+        var columns = table.Children
+            .Where(child => child.Kind == ObjectExplorerNodeKind.Column)
+            .Select(child => child.RawName)
+            .Take(3)
+            .ToArray();
+        var indexName = "ix_" + table.RawName + (columns.Length > 0 ? "_" + string.Join("_", columns) : "_column");
+        var columnList = columns.Length > 0
+            ? string.Join(", ", columns.Select(PostgreSqlIdentifierQuoter.Quote))
+            : PostgreSqlIdentifierQuoter.Quote("column_name");
+        var sql = $"-- Review the index name and columns before executing.\n-- Right-click the table and expand Columns to make the template more specific.\nCREATE INDEX {PostgreSqlIdentifierQuoter.Quote(indexName)}\n    ON {qualifiedTable}\n    USING btree ({columnList});\n";
+        AddTab(scriptedConnection: ActiveView?.Connection, targetDatabase: ActiveDocument?.Database,
+            title: $"Create index on {table.RawName}", sql: sql);
     }
 
     private TreeViewItem? SelectedObjectExplorerItem()
