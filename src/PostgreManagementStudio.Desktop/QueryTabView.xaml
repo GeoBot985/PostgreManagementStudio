@@ -101,7 +101,7 @@
       </TabItem>
       <TabItem x:Name="DescriptionTab" Header="Object Description">
         <DockPanel>
-          <ToolBar DockPanel.Dock="Top" Header="Object description" AutomationProperties.Name="Object description toolbar">
+          <ToolBar x:Name="DescriptionToolbar" DockPanel.Dock="Top" Header="Object description" AutomationProperties.Name="Object description toolbar">
             <TextBlock Text="Preset:" VerticalAlignment="Center"/>
             <ComboBox x:Name="DescriptionPreset" Width="125" SelectedIndex="0" SelectionChanged="DescriptionPreset_SelectionChanged"
                       AutomationProperties.Name="Column preset">

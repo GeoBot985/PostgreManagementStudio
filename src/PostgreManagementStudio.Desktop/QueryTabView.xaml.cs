@@ -148,6 +148,15 @@ public partial class QueryTabView : UserControl
         FindPanel.Background = surface;
         FindPanel.BorderBrush = accent;
         ResultSearchPanel.Background = surface;
+        DescriptionToolbar.Background = surface;
+        DescriptionToolbar.Foreground = foreground;
+        DescriptionPreset.Background = surface;
+        DescriptionPreset.Foreground = foreground;
+        DescriptionFormat.Background = surface;
+        DescriptionFormat.Foreground = foreground;
+        DescriptionFilter.Background = editor;
+        DescriptionFilter.Foreground = foreground;
+        DescriptionSummary.Foreground = foreground;
         MessagesText.Background = editor;
         MessagesText.Foreground = foreground;
         DescriptionText.Background = editor;
@@ -156,6 +165,7 @@ public partial class QueryTabView : UserControl
         DescriptionDefinition.Foreground = foreground;
         DescriptionColumns.Background = editor;
         DescriptionColumns.Foreground = foreground;
+        ApplyResultGridTheme(DescriptionColumns, dark);
         foreach (var item in ResultTabs.Items)
         {
             if (item is TabItem { Content: DataGrid grid }) ApplyResultGridTheme(grid, dark);
