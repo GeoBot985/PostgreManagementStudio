@@ -130,6 +130,34 @@ public partial class QueryTabView : UserControl
 
     public QueryDocument Document => _document;
 
+    public void ApplyTheme(bool dark)
+    {
+        static System.Windows.Media.SolidColorBrush Brush(string value) =>
+            new((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(value));
+        var editor = Brush(dark ? "#1E1E1E" : "#FFFFFF");
+        var surface = Brush(dark ? "#252526" : "#F7F9FC");
+        var foreground = Brush(dark ? "#DCDCDC" : "#172033");
+        var accent = Brush(dark ? "#6B5CD6" : "#4A78B0");
+        SqlText.Background = editor;
+        SqlText.Foreground = foreground;
+        SqlText.CaretBrush = foreground;
+        OutputTabs.Background = surface;
+        OutputTabs.Foreground = foreground;
+        ResultTabs.Background = surface;
+        DescriptionModes.Background = surface;
+        FindPanel.Background = surface;
+        FindPanel.BorderBrush = accent;
+        ResultSearchPanel.Background = surface;
+        MessagesText.Background = editor;
+        MessagesText.Foreground = foreground;
+        DescriptionText.Background = editor;
+        DescriptionText.Foreground = foreground;
+        DescriptionDefinition.Background = editor;
+        DescriptionDefinition.Foreground = foreground;
+        DescriptionColumns.Background = editor;
+        DescriptionColumns.Foreground = foreground;
+    }
+
     private double _editorZoom = 1.0;
     private double _outputZoom = 1.0;
 

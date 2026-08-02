@@ -103,11 +103,11 @@
 
     <ToolBarTray x:Name="ShellToolbars" DockPanel.Dock="Top" IsLocked="True" AutomationProperties.Name="Application toolbars">
       <ToolBar Band="0" BandIndex="0" Header="Standard">
-        <Button Command="{x:Static local:ShellCommands.NewQuery}" ToolTip="New Query (Ctrl+N)" AutomationProperties.Name="New query"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE710;"/></Button>
-        <Button Command="{x:Static local:ShellCommands.OpenFile}" ToolTip="Open SQL file (Ctrl+O)" AutomationProperties.Name="Open file"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8E5;"/></Button>
-        <Button Command="{x:Static local:ShellCommands.Save}" ToolTip="Save (Ctrl+S)" AutomationProperties.Name="Save query"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE74E;"/></Button>
+        <Button Command="{x:Static local:ShellCommands.NewQuery}" ToolTip="New Query (Ctrl+N)" AutomationProperties.Name="New query"><TextBlock FontFamily="Segoe MDL2 Assets" Foreground="#2B78D0" Text="&#xE710;"/></Button>
+        <Button Command="{x:Static local:ShellCommands.OpenFile}" ToolTip="Open SQL file (Ctrl+O)" AutomationProperties.Name="Open file"><TextBlock FontFamily="Segoe MDL2 Assets" Foreground="#D09A24" Text="&#xE8E5;"/></Button>
+        <Button Command="{x:Static local:ShellCommands.Save}" ToolTip="Save (Ctrl+S)" AutomationProperties.Name="Save query"><TextBlock FontFamily="Segoe MDL2 Assets" Foreground="#2B78D0" Text="&#xE74E;"/></Button>
         <Separator/>
-        <Button Command="{x:Static local:ShellCommands.RefreshObjectExplorer}" ToolTip="Refresh Object Explorer" AutomationProperties.Name="Refresh Object Explorer"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE72C;"/></Button>
+        <Button Command="{x:Static local:ShellCommands.RefreshObjectExplorer}" ToolTip="Refresh Object Explorer" AutomationProperties.Name="Refresh Object Explorer"><TextBlock FontFamily="Segoe MDL2 Assets" Foreground="#2B78D0" Text="&#xE72C;"/></Button>
         <Button Command="{x:Static local:ShellCommands.Reconnect}" ToolTip="Reconnect to PostgreSQL" AutomationProperties.Name="Reconnect"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE72C;"/></Button>
       </ToolBar>
       <ToolBar Band="1" BandIndex="0" Header="Query">
@@ -121,10 +121,10 @@
                   LostKeyboardFocus="DatabaseSelector_LostKeyboardFocus"/>
         <Separator/>
         <Button Command="{x:Static local:ShellCommands.Execute}" ToolTip="Execute query (F5 or Ctrl+Enter)" AutomationProperties.Name="Execute query">
-          <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE768;" Margin="0,0,4,0"/><TextBlock Text="Execute"/></StackPanel>
+          <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Foreground="#2EA043" Text="&#xE768;" Margin="0,0,4,0"/><TextBlock Text="Execute"/></StackPanel>
         </Button>
         <Button Command="{x:Static local:ShellCommands.Cancel}" ToolTip="Cancel query (Esc)" AutomationProperties.Name="Cancel query">
-          <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE71A;" Margin="0,0,4,0"/><TextBlock Text="Cancel"/></StackPanel>
+          <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Foreground="#D13438" Text="&#xE71A;" Margin="0,0,4,0"/><TextBlock Text="Cancel"/></StackPanel>
         </Button>
         <Separator/>
         <Button Command="{x:Static local:ShellCommands.EstimatedPlan}" ToolTip="Display estimated execution plan (Ctrl+L)" AutomationProperties.Name="Estimated execution plan"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE9D2;"/></Button>
@@ -156,7 +156,7 @@
       </Grid.ColumnDefinitions>
       <Border x:Name="ObjectExplorerPane" BorderBrush="#B8B8B8" BorderThickness="0,0,1,0">
         <DockPanel>
-          <Border DockPanel.Dock="Top" Background="#F3F3F3" BorderBrush="#D0D0D0" BorderThickness="0,0,0,1" Padding="8,5">
+          <Border x:Name="ObjectExplorerHeaderBorder" DockPanel.Dock="Top" Background="#DCE6F5" BorderBrush="#6B8EBD" BorderThickness="0,0,0,1" Padding="8,5">
             <TextBlock x:Name="ObjectExplorerHeader" Text="Object Explorer" FontWeight="SemiBold"/>
           </Border>
       <TreeView x:Name="ObjectExplorerTree" ContextMenuOpening="ObjectExplorerTree_ContextMenuOpening"
@@ -171,7 +171,7 @@
           </TreeView>
         </DockPanel>
       </Border>
-      <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Background="#E5E5E5"/>
+      <GridSplitter x:Name="ObjectExplorerSplitter" Grid.Column="1" Width="5" HorizontalAlignment="Stretch" Background="#B7C9DF"/>
       <TabControl x:Name="QueryTabs" Grid.Column="2" SelectionChanged="QueryTabs_SelectionChanged">
         <TabControl.ContextMenu>
           <ContextMenu>

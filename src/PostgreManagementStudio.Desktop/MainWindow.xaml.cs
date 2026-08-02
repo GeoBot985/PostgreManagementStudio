@@ -241,6 +241,7 @@ public partial class MainWindow : Window
             _backupTools, _backupInspection, _objectSearch, _postgresVersion, _indexAnalysis, _schemaExtractor,
             _dataTransfer, _resultExport, _transferHistory, _performanceDiagnostics,
             _editorObjectResolver, _objectDescriptions);
+        view.ApplyTheme(_darkTheme);
         if (recoverySnapshot is not null)
             view.RestoreRecoverySnapshot(recoverySnapshot);
         var tab = new TabItem { Content = view, Tag = doc };
@@ -548,6 +549,15 @@ public partial class MainWindow : Window
         Background = background;
         Foreground = foreground;
         ApplyThemeToVisual(this, background, surface, foreground, border);
+        MainMenu.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dark ? "#1F1F1F" : "#E8EEF8"));
+        ShellToolbars.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dark ? "#252526" : "#EEF3FA"));
+        ObjectExplorerHeaderBorder.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dark ? "#2D2D30" : "#DCE6F5"));
+        ObjectExplorerHeaderBorder.BorderBrush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dark ? "#6B5CD6" : "#6B8EBD"));
+        ObjectExplorerSplitter.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dark ? "#454545" : "#B7C9DF"));
+        ShellStatusBar.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dark ? "#C7BA55" : "#FFF59D"));
+        ShellStatusBar.Foreground = new SolidColorBrush(Color.FromRgb(32, 32, 32));
+        foreach (var view in QueryTabs.Items.OfType<TabItem>().Select(item => item.Content).OfType<QueryTabView>())
+            view.ApplyTheme(dark);
     }
 
     private static void ApplyThemeToVisual(DependencyObject root, Brush background, Brush surface, Brush foreground, Brush border)
