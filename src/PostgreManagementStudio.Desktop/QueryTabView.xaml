@@ -28,6 +28,7 @@
              TextWrapping="NoWrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
              FontFamily="Consolas" FontSize="13" Padding="6"
              TextChanged="SqlText_TextChanged" SelectionChanged="SqlText_SelectionChanged"
+             AllowDrop="True" PreviewDragOver="SqlText_PreviewDragOver" Drop="SqlText_Drop"
              AutomationProperties.Name="SQL editor">
       <TextBox.ContextMenu>
         <ContextMenu>
@@ -134,7 +135,7 @@
           <TabControl x:Name="DescriptionModes">
             <TabItem Header="Columns">
               <DataGrid x:Name="DescriptionColumns" AutoGenerateColumns="False" IsReadOnly="False"
-                        CanUserAddRows="False" SelectionMode="Extended" SelectionUnit="FullRow"
+                        CanUserAddRows="False" SelectionMode="Extended" SelectionUnit="Cell"
                         PreviewKeyDown="DescriptionColumns_PreviewKeyDown"
                         AutomationProperties.Name="Object columns">
                 <DataGrid.Columns>

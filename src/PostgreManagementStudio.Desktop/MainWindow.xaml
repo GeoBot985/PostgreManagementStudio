@@ -156,6 +156,8 @@
           </Border>
       <TreeView x:Name="ObjectExplorerTree" ContextMenuOpening="ObjectExplorerTree_ContextMenuOpening"
                 PreviewMouseRightButtonDown="ObjectExplorerTree_PreviewMouseRightButtonDown"
+                PreviewMouseLeftButtonDown="ObjectExplorerTree_PreviewMouseLeftButtonDown"
+                PreviewMouseMove="ObjectExplorerTree_PreviewMouseMove"
                 SelectedItemChanged="ObjectExplorerTree_SelectedItemChanged"
                 PreviewKeyDown="ObjectExplorerTree_PreviewKeyDown">
             <TreeView.ContextMenu>

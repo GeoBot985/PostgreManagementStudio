@@ -129,6 +129,30 @@ public partial class QueryTabView : UserControl
     }
 
     public QueryDocument Document => _document;
+
+    public void InsertDraggedColumn(ObjectExplorerNode node)
+    {
+        var text = node.QualifiedName ?? PostgreSqlIdentifierQuoter.Quote(node.RawName);
+        var start = Math.Clamp(SqlText.SelectionStart, 0, SqlText.Text.Length);
+        var length = Math.Clamp(SqlText.SelectionLength, 0, SqlText.Text.Length - start);
+        SqlText.Select(start, length);
+        SqlText.SelectedText = text;
+        SqlText.CaretIndex = start + text.Length;
+        SqlText.Focus();
+    }
+
+    private void SqlText_PreviewDragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = e.Data.GetDataPresent(typeof(ObjectExplorerNode)) ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void SqlText_Drop(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetData(typeof(ObjectExplorerNode)) is ObjectExplorerNode { Kind: ObjectExplorerNodeKind.Column } node)
+            InsertDraggedColumn(node);
+        e.Handled = true;
+    }
     public Guid RecoveryId => _recoveryId;
     public ShellConnectionInfo? Connection => _connection;
     public bool IncludeActualPlan { get; set; }

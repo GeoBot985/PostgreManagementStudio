@@ -50,6 +50,7 @@ public partial class MainWindow : Window
     private int _healthCheckRunning;
     private ObjectExplorerContext? _objectExplorerContext;
     private TreeViewItem? _selectedObjectExplorerItem;
+    private Point _objectExplorerDragStart;
 
     public MainWindow(
         QueryTabManager tabs,
@@ -483,6 +484,32 @@ public partial class MainWindow : Window
             treeItem.IsSelected = true;
             treeItem.Focus();
         }
+    }
+
+    private void ObjectExplorerTree_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        _objectExplorerDragStart = e.GetPosition(ObjectExplorerTree);
+    }
+
+    private void ObjectExplorerTree_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (e.LeftButton != MouseButtonState.Pressed) return;
+        var delta = e.GetPosition(ObjectExplorerTree) - _objectExplorerDragStart;
+        if (Math.Abs(delta.X) < SystemParameters.MinimumHorizontalDragDistance
+            && Math.Abs(delta.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+        if (FindVisualParent<TreeViewItem>(e.OriginalSource as DependencyObject)?.Tag
+            is not ObjectExplorerNode { Kind: ObjectExplorerNodeKind.Column } node) return;
+        DragDrop.DoDragDrop(ObjectExplorerTree, new DataObject(typeof(ObjectExplorerNode), node), DragDropEffects.Copy);
+    }
+
+    private static T? FindVisualParent<T>(DependencyObject? child) where T : DependencyObject
+    {
+        while (child is not null)
+        {
+            if (child is T match) return match;
+            child = VisualTreeHelper.GetParent(child);
+        }
+        return null;
     }
 
     private void ObjectExplorerTree_ContextMenuOpening(object sender, ContextMenuEventArgs e)
