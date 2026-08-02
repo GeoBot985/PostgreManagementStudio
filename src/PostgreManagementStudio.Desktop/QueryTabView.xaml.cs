@@ -204,6 +204,8 @@ public partial class QueryTabView : UserControl
         headerStyle.Setters.Add(new Setter(Control.ForegroundProperty, foreground));
         headerStyle.Setters.Add(new Setter(Control.BackgroundProperty, header));
         headerStyle.Setters.Add(new Setter(Control.BorderBrushProperty, lines));
+        headerStyle.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(6, 3, 6, 3)));
+        headerStyle.Setters.Add(new Setter(Control.VerticalContentAlignmentProperty, VerticalAlignment.Center));
         grid.ColumnHeaderStyle = headerStyle;
     }
 
