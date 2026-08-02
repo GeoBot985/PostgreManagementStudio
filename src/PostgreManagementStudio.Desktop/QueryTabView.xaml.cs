@@ -156,8 +156,6 @@ public partial class QueryTabView : UserControl
     {
         var size = System.Windows.Documents.TextElement.GetFontSize(root);
         if (!double.IsNaN(size) && size > 0) System.Windows.Documents.TextElement.SetFontSize(root, size * factor);
-        for (var index = 0; index < System.Windows.Media.VisualTreeHelper.GetChildrenCount(root); index++)
-            ScaleSection(System.Windows.Media.VisualTreeHelper.GetChild(root, index), factor);
     }
 
     public void InsertDraggedColumn(ObjectExplorerNode node)

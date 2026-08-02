@@ -526,13 +526,8 @@ public partial class MainWindow : Window
 
     private static void ScaleSection(DependencyObject root, double factor)
     {
-        if (root is not Window)
-        {
-            var size = TextElement.GetFontSize(root);
-            if (!double.IsNaN(size) && size > 0) TextElement.SetFontSize(root, size * factor);
-        }
-        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
-            ScaleSection(VisualTreeHelper.GetChild(root, index), factor);
+        var size = TextElement.GetFontSize(root);
+        if (!double.IsNaN(size) && size > 0) TextElement.SetFontSize(root, size * factor);
     }
 
     private void LightTheme_Click(object sender, RoutedEventArgs e) => ApplyTheme(false);
