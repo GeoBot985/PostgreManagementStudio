@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Data.Common;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -51,6 +52,8 @@ public partial class MainWindow : Window
     private ObjectExplorerContext? _objectExplorerContext;
     private TreeViewItem? _selectedObjectExplorerItem;
     private Point _objectExplorerDragStart;
+    private double _textZoom = 1.0;
+    private readonly Dictionary<DependencyObject, double> _baseFontSizes = [];
 
     public MainWindow(
         QueryTabManager tabs,
@@ -489,6 +492,32 @@ public partial class MainWindow : Window
     private void ObjectExplorerTree_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         _objectExplorerDragStart = e.GetPosition(ObjectExplorerTree);
+    }
+
+    private void MainWindow_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (!Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) return;
+        var direction = Math.Sign(e.Delta);
+        if (direction == 0) return;
+        _textZoom = Math.Clamp(_textZoom * (direction > 0 ? 1.05 : 1 / 1.05), 0.5, 2.0);
+        ApplyTextZoom(this);
+        e.Handled = true;
+    }
+
+    private void ApplyTextZoom(DependencyObject root)
+    {
+        if (root is not Window)
+        {
+            if (!_baseFontSizes.TryGetValue(root, out var baseSize))
+            {
+                baseSize = TextElement.GetFontSize(root);
+                if (double.IsNaN(baseSize) || baseSize <= 0) baseSize = 12;
+                _baseFontSizes[root] = baseSize;
+            }
+            TextElement.SetFontSize(root, baseSize * _textZoom);
+        }
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+            ApplyTextZoom(VisualTreeHelper.GetChild(root, index));
     }
 
     private void ObjectExplorerTree_PreviewMouseMove(object sender, MouseEventArgs e)
