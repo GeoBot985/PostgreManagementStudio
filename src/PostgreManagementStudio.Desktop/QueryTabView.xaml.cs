@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using Microsoft.Win32;
 using PostgreManagementStudio.Application;
 using PostgreManagementStudio.Core;
@@ -138,6 +139,7 @@ public partial class QueryTabView : UserControl
         var surface = Brush(dark ? "#252526" : "#F7F9FC");
         var foreground = Brush(dark ? "#DCDCDC" : "#172033");
         var accent = Brush(dark ? "#6B5CD6" : "#4A78B0");
+        _darkTheme = dark;
         SqlText.SetTheme(dark);
         OutputTabs.Background = surface;
         OutputTabs.Foreground = foreground;
@@ -154,10 +156,50 @@ public partial class QueryTabView : UserControl
         DescriptionDefinition.Foreground = foreground;
         DescriptionColumns.Background = editor;
         DescriptionColumns.Foreground = foreground;
+        foreach (var item in ResultTabs.Items)
+        {
+            if (item is TabItem { Content: DataGrid grid }) ApplyResultGridTheme(grid, dark);
+        }
+    }
+
+    private static void ApplyResultGridTheme(DataGrid grid, bool dark)
+    {
+        static System.Windows.Media.SolidColorBrush Brush(string value) =>
+            new((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(value));
+
+        var background = Brush(dark ? "#252526" : "#FFFFFF");
+        var alternate = Brush(dark ? "#2D2D30" : "#F3F6FA");
+        var foreground = Brush(dark ? "#DCDCDC" : "#172033");
+        var header = Brush(dark ? "#333337" : "#E8EEF8");
+        var lines = Brush(dark ? "#454545" : "#CBD5E1");
+        var selected = Brush(dark ? "#264F78" : "#C7DDF7");
+
+        grid.Background = background;
+        grid.Foreground = foreground;
+        grid.RowBackground = background;
+        grid.AlternatingRowBackground = alternate;
+        grid.HorizontalGridLinesBrush = lines;
+        grid.VerticalGridLinesBrush = lines;
+
+        var cellStyle = new Style(typeof(DataGridCell));
+        cellStyle.Setters.Add(new Setter(Control.ForegroundProperty, foreground));
+        cellStyle.Setters.Add(new Setter(Control.BackgroundProperty, background));
+        var selectedTrigger = new Trigger { Property = DataGridCell.IsSelectedProperty, Value = true };
+        selectedTrigger.Setters.Add(new Setter(Control.BackgroundProperty, selected));
+        selectedTrigger.Setters.Add(new Setter(Control.ForegroundProperty, foreground));
+        cellStyle.Triggers.Add(selectedTrigger);
+        grid.CellStyle = cellStyle;
+
+        var headerStyle = new Style(typeof(DataGridColumnHeader));
+        headerStyle.Setters.Add(new Setter(Control.ForegroundProperty, foreground));
+        headerStyle.Setters.Add(new Setter(Control.BackgroundProperty, header));
+        headerStyle.Setters.Add(new Setter(Control.BorderBrushProperty, lines));
+        grid.ColumnHeaderStyle = headerStyle;
     }
 
     private double _editorZoom = 1.0;
     private double _outputZoom = 1.0;
+    private bool _darkTheme;
 
     public void ApplySectionZoom(DependencyObject? source, double factor)
     {
@@ -836,6 +878,7 @@ public partial class QueryTabView : UserControl
             EnableRowVirtualization = true,
             EnableColumnVirtualization = true,
         };
+        ApplyResultGridTheme(view, _darkTheme);
         VirtualizingPanel.SetIsVirtualizing(view, true);
         VirtualizingPanel.SetVirtualizationMode(view, VirtualizationMode.Recycling);
         ScrollViewer.SetIsDeferredScrollingEnabled(view, true);
