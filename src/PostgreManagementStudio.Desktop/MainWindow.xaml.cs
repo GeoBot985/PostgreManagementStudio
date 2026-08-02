@@ -556,8 +556,39 @@ public partial class MainWindow : Window
         ObjectExplorerSplitter.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dark ? "#454545" : "#B7C9DF"));
         ShellStatusBar.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dark ? "#C7BA55" : "#FFF59D"));
         ShellStatusBar.Foreground = new SolidColorBrush(Color.FromRgb(32, 32, 32));
+        ApplyPopupMenuTheme(dark, background, surface, foreground, border);
         foreach (var view in QueryTabs.Items.OfType<TabItem>().Select(item => item.Content).OfType<QueryTabView>())
             view.ApplyTheme(dark);
+    }
+
+    private void ApplyPopupMenuTheme(bool dark, Brush background, Brush surface, Brush foreground, Brush border)
+    {
+        var hover = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dark ? "#3E3E42" : "#DCE8F7"));
+        var disabled = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dark ? "#777777" : "#8A94A3"));
+        var menuItemStyle = new Style(typeof(MenuItem));
+        menuItemStyle.Setters.Add(new Setter(Control.ForegroundProperty, foreground));
+        menuItemStyle.Setters.Add(new Setter(Control.BackgroundProperty, surface));
+        menuItemStyle.Setters.Add(new Setter(Control.BorderBrushProperty, border));
+        var highlighted = new Trigger { Property = MenuItem.IsHighlightedProperty, Value = true };
+        highlighted.Setters.Add(new Setter(Control.BackgroundProperty, hover));
+        menuItemStyle.Triggers.Add(highlighted);
+        var disabledTrigger = new Trigger { Property = UIElement.IsEnabledProperty, Value = false };
+        disabledTrigger.Setters.Add(new Setter(Control.ForegroundProperty, disabled));
+        menuItemStyle.Triggers.Add(disabledTrigger);
+        Resources[typeof(MenuItem)] = menuItemStyle;
+
+        var contextStyle = new Style(typeof(ContextMenu));
+        contextStyle.Setters.Add(new Setter(Control.BackgroundProperty, surface));
+        contextStyle.Setters.Add(new Setter(Control.ForegroundProperty, foreground));
+        contextStyle.Setters.Add(new Setter(Control.BorderBrushProperty, border));
+        contextStyle.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(1)));
+        Resources[typeof(ContextMenu)] = contextStyle;
+
+        var separatorStyle = new Style(typeof(Separator));
+        separatorStyle.Setters.Add(new Setter(Control.BackgroundProperty, border));
+        separatorStyle.Setters.Add(new Setter(Control.ForegroundProperty, border));
+        Resources[typeof(Separator)] = separatorStyle;
+        MainMenu.Background = background;
     }
 
     private static void ApplyThemeToVisual(DependencyObject root, Brush background, Brush surface, Brush foreground, Brush border)
