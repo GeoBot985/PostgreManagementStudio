@@ -434,10 +434,12 @@ public partial class MainWindow : Window
     {
         await ObserveAsync(async () =>
         {
-            if (await RestoreWorkspaceAsync()) return;
-            if (_defaultConnection is null) return;
-            TrackConnection(_defaultConnection);
-            await _defaultConnection.Session.ConnectAsync(_defaultConnection.Configuration);
+            await RestoreWorkspaceAsync();
+            if (_defaultConnection is not null)
+            {
+                TrackConnection(_defaultConnection);
+                await _defaultConnection.Session.ConnectAsync(_defaultConnection.Configuration);
+            }
         });
         UpdateShellState();
         CommandManager.InvalidateRequerySuggested();
