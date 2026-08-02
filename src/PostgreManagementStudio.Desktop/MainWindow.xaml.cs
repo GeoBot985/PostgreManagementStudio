@@ -568,7 +568,9 @@ public partial class MainWindow : Window
             control.Background = root is TextBox or DataGrid or TreeView or TabControl or TabItem or ComboBox ? surface : background;
             if (control is Button or MenuItem or TabItem) control.BorderBrush = border;
         }
-        else if (root is TextBlock text) text.Foreground = foreground;
+        else if (root is TextBlock text
+                 && !text.FontFamily.Source.Contains("Segoe MDL2 Assets", StringComparison.OrdinalIgnoreCase))
+            text.Foreground = foreground;
         if (root is Panel panel) panel.Background = background;
         if (root is Border outline) outline.BorderBrush = border;
         for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
