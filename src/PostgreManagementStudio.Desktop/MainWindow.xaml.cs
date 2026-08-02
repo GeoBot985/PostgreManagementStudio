@@ -5,6 +5,8 @@ using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Runtime.InteropServices;
+using System.Windows.Interop;
 using System.Windows.Threading;
 using PostgreManagementStudio.Application;
 using PostgreManagementStudio.Core;
@@ -15,6 +17,13 @@ namespace PostgreManagementStudio.Desktop;
 
 public partial class MainWindow : Window
 {
+    private const int DwmwaUseImmersiveDarkMode = 20;
+    private const int DwmwaCaptionColor = 35;
+    private const int DwmwaTextColor = 36;
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(nint hwnd, int attribute, ref int value, int valueSize);
+
     private readonly QueryTabManager _tabs;
     private readonly ObjectExplorerService _objectExplorer;
     private readonly ObjectScriptService _objectScripts;
@@ -85,6 +94,7 @@ public partial class MainWindow : Window
             "MainWindowConstruction",
             performanceDiagnostics);
         InitializeComponent();
+        SourceInitialized += (_, _) => ApplyNativeTitleBarTheme(_darkTheme);
         ApplyTheme(false);
         _tabs = tabs;
         _objectExplorer = objectExplorer;
@@ -550,6 +560,7 @@ public partial class MainWindow : Window
         var border = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dark ? "#454545" : "#CBD5E1"));
         Background = background;
         Foreground = foreground;
+        ApplyNativeTitleBarTheme(dark);
         ApplyThemeToVisual(this, background, surface, foreground, border);
         MainMenu.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dark ? "#1F1F1F" : "#E8EEF8"));
         ShellToolbars.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dark ? "#252526" : "#EEF3FA"));
@@ -570,6 +581,22 @@ public partial class MainWindow : Window
         foreach (var view in QueryTabs.Items.OfType<TabItem>().Select(item => item.Content).OfType<QueryTabView>())
             view.ApplyTheme(dark);
     }
+
+    private void ApplyNativeTitleBarTheme(bool dark)
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        if (handle == nint.Zero) return;
+        var darkValue = dark ? 1 : 0;
+        DwmSetWindowAttribute(handle, DwmwaUseImmersiveDarkMode, ref darkValue, sizeof(int));
+        var caption = dark ? Color.FromRgb(31, 31, 31) : Color.FromRgb(244, 247, 251);
+        var text = dark ? Color.FromRgb(230, 230, 230) : Color.FromRgb(31, 41, 55);
+        var captionValue = ColorRef(caption);
+        var textValue = ColorRef(text);
+        DwmSetWindowAttribute(handle, DwmwaCaptionColor, ref captionValue, sizeof(int));
+        DwmSetWindowAttribute(handle, DwmwaTextColor, ref textValue, sizeof(int));
+    }
+
+    private static int ColorRef(Color color) => color.R | (color.G << 8) | (color.B << 16);
 
     private void ApplyPopupMenuTheme(bool dark, Brush background, Brush surface, Brush foreground, Brush border)
     {
