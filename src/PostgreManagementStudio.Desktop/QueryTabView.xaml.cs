@@ -1000,6 +1000,27 @@ public partial class QueryTabView : UserControl
         WorkspaceStateChanged?.Invoke(this, EventArgs.Empty);
     }
     private void SqlText_SelectionChanged(object sender, RoutedEventArgs e) => WorkspaceStateChanged?.Invoke(this, EventArgs.Empty);
+
+    private void SqlText_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
+    {
+        if (e.Key != System.Windows.Input.Key.Tab || SqlText.SelectionLength == 0) return;
+        var start = SqlText.SelectionStart;
+        var end = start + SqlText.SelectionLength;
+        var lineStart = start == 0 ? 0 : SqlText.Text.LastIndexOf('\n', start - 1) + 1;
+        var lineEnd = end >= SqlText.Text.Length ? SqlText.Text.Length : SqlText.Text.IndexOf('\n', end);
+        if (lineEnd < 0) lineEnd = SqlText.Text.Length;
+        var selected = SqlText.Text[lineStart..lineEnd];
+        var unindent = System.Windows.Input.Keyboard.Modifiers.HasFlag(System.Windows.Input.ModifierKeys.Shift);
+        var replacement = string.Join("\n", selected.Split('\n').Select(line =>
+            unindent
+                ? line.StartsWith("    ", StringComparison.Ordinal) ? line[4..] : line.TrimStart().Length < line.Length ? line[1..] : line
+                : "    " + line));
+        SqlText.Select(lineStart, lineEnd - lineStart);
+        SqlText.SelectedText = replacement;
+        SqlText.Select(lineStart, replacement.Length);
+        e.Handled = true;
+    }
+
     private async void UserControl_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
         if (e.Key != System.Windows.Input.Key.Space
