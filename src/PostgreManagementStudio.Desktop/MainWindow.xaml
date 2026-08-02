@@ -48,6 +48,11 @@
         <Separator/>
         <MenuItem Header="_Toolbars" IsCheckable="True" IsChecked="True" Click="ToggleToolbars_Click"/>
         <MenuItem Header="_Status Bar" IsCheckable="True" IsChecked="True" Click="ToggleStatusBar_Click"/>
+        <Separator/>
+        <MenuItem Header="Theme" IsEnabled="True">
+          <MenuItem x:Name="LightThemeMenuItem" Header="Light" IsCheckable="True" IsChecked="True" Click="LightTheme_Click"/>
+          <MenuItem x:Name="DarkThemeMenuItem" Header="Dark" IsCheckable="True" Click="DarkTheme_Click"/>
+        </MenuItem>
       </MenuItem>
       <MenuItem Header="_Query">
         <MenuItem Header="_Execute" Command="{x:Static local:ShellCommands.Execute}" InputGestureText="F5 / Ctrl+Enter"/>

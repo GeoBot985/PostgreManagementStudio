@@ -54,6 +54,7 @@ public partial class MainWindow : Window
     private Point _objectExplorerDragStart;
     private double _textZoom = 1.0;
     private readonly Dictionary<DependencyObject, double> _baseFontSizes = [];
+    private bool _darkTheme;
 
     public MainWindow(
         QueryTabManager tabs,
@@ -85,6 +86,7 @@ public partial class MainWindow : Window
             "MainWindowConstruction",
             performanceDiagnostics);
         InitializeComponent();
+        ApplyTheme(false);
         _tabs = tabs;
         _objectExplorer = objectExplorer;
         _objectScripts = objectScripts;
@@ -502,6 +504,41 @@ public partial class MainWindow : Window
         _textZoom = Math.Clamp(_textZoom * (direction > 0 ? 1.05 : 1 / 1.05), 0.5, 2.0);
         ApplyTextZoom(this);
         e.Handled = true;
+    }
+
+    private void LightTheme_Click(object sender, RoutedEventArgs e) => ApplyTheme(false);
+    private void DarkTheme_Click(object sender, RoutedEventArgs e) => ApplyTheme(true);
+
+    private void ApplyTheme(bool dark)
+    {
+        _darkTheme = dark;
+        if (LightThemeMenuItem is not null)
+        {
+            LightThemeMenuItem.IsChecked = !dark;
+            DarkThemeMenuItem.IsChecked = dark;
+        }
+        var background = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dark ? "#1E1E1E" : "#F4F7FB"));
+        var surface = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dark ? "#252526" : "#FFFFFF"));
+        var foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dark ? "#E6E6E6" : "#1F2937"));
+        var border = new SolidColorBrush((Color)ColorConverter.ConvertFromString(dark ? "#454545" : "#CBD5E1"));
+        Background = background;
+        Foreground = foreground;
+        ApplyThemeToVisual(this, background, surface, foreground, border);
+    }
+
+    private static void ApplyThemeToVisual(DependencyObject root, Brush background, Brush surface, Brush foreground, Brush border)
+    {
+        if (root is Control control)
+        {
+            control.Foreground = foreground;
+            control.Background = root is TextBox or DataGrid or TreeView or TabControl or TabItem or ComboBox ? surface : background;
+            if (control is Button or MenuItem or TabItem) control.BorderBrush = border;
+        }
+        else if (root is TextBlock text) text.Foreground = foreground;
+        if (root is Panel panel) panel.Background = background;
+        if (root is Border outline) outline.BorderBrush = border;
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+            ApplyThemeToVisual(VisualTreeHelper.GetChild(root, index), background, surface, foreground, border);
     }
 
     private void ApplyTextZoom(DependencyObject root)
